@@ -84,6 +84,8 @@ public class NeptuneBulkLoader implements AutoCloseable {
     private final String iamRoleArn;
     private final String parallelism;
     private final Boolean monitor;
+    private final Boolean compress;
+    private final Boolean compressDelete;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -95,6 +97,8 @@ public class NeptuneBulkLoader implements AutoCloseable {
         this.iamRoleArn = bulkLoadConfig.getIamRoleArn();
         this.parallelism = bulkLoadConfig.getParallelism().toUpperCase();
         this.monitor = bulkLoadConfig.isMonitor();
+        this.compress = bulkLoadConfig.isCompress();
+        this.compressDelete = bulkLoadConfig.isCompressDelete();
 
         // Initialize clients
         this.objectMapper = new ObjectMapper();
@@ -105,12 +109,12 @@ public class NeptuneBulkLoader implements AutoCloseable {
                 .credentialsProvider(DefaultCredentialsProvider.create())
                 .multipartEnabled(true)
                 .httpClientBuilder(NettyNioAsyncHttpClient.builder()
-                    .maxConcurrency(200) // Increase max concurrent connections further
-                    .maxPendingConnectionAcquires(2000) // Increase pending connection queue
-                    .connectionAcquisitionTimeout(Duration.ofMinutes(10)) // 10 minute timeout
-                    .connectionTimeout(Duration.ofMinutes(5)) // 5 minute connection timeout
-                    .readTimeout(Duration.ofMinutes(15)) // 15 minute read timeout
-                    .writeTimeout(Duration.ofMinutes(15)) // 15 minute write timeout
+                    .maxConcurrency(300)
+                    .maxPendingConnectionAcquires(5000)
+                    .connectionAcquisitionTimeout(Duration.ofHours(3))
+                    .connectionTimeout(Duration.ofMinutes(5))
+                    .readTimeout(Duration.ofMinutes(15))
+                    .writeTimeout(Duration.ofMinutes(15))
                 )
                 .overrideConfiguration(ClientOverrideConfiguration.builder()
                     .apiCallTimeout(Duration.ofMinutes(30)) // 30 minute API call timeout
@@ -157,6 +161,9 @@ public class NeptuneBulkLoader implements AutoCloseable {
         System.err.println("Neptune Endpoint: " + this.neptuneEndpoint);
         System.err.println("Bulk Load Parallelism: " + this.parallelism);
         System.err.println("Bulk Load Monitor: " + this.monitor);
+        System.err.println("Compress: " + this.compress);
+        System.err.println("Compress Delete Original: " + this.compressDelete);
+        System.err.println();
     }
 
     // Constructor for testing
@@ -168,6 +175,8 @@ public class NeptuneBulkLoader implements AutoCloseable {
         this.iamRoleArn = bulkLoadConfig.getIamRoleArn();
         this.parallelism = bulkLoadConfig.getParallelism();
         this.monitor = bulkLoadConfig.isMonitor();
+        this.compress = bulkLoadConfig.isCompress();
+        this.compressDelete = bulkLoadConfig.isCompressDelete();
         this.objectMapper = new ObjectMapper();
         this.transferManager = transferManager;
         this.httpClient = httpClient;
@@ -176,7 +185,7 @@ public class NeptuneBulkLoader implements AutoCloseable {
     /**
      * Upload Neptune vertices and edges CSV files asynchronously
      */
-    public String uploadCsvFilesToS3(String filePath) throws Exception {
+    public String uploadCsvFilesToS3(String filePath, Boolean isCompress) throws Exception {
         System.err.println("Uploading Gremlin load data to S3...");
 
         // Grab the timestamp of ConvertCsv to use as S3 directory prefix
@@ -189,7 +198,8 @@ public class NeptuneBulkLoader implements AutoCloseable {
             .orElse("") + convertCsvTimeStamp;
 
         // Upload all files from the directory
-        CompletableFuture<Boolean> uploadFuture = uploadFileAsync(filePath, s3PrefixWithTimeStamp);
+        CompletableFuture<Boolean> uploadFuture =
+            uploadFileAsync(filePath, s3PrefixWithTimeStamp, isCompress);
 
         // Wait for upload to complete
         uploadFuture.get();
@@ -208,7 +218,8 @@ public class NeptuneBulkLoader implements AutoCloseable {
     /**
      * Upload all files from a directory to S3 sequentially to avoid connection pool exhaustion
      */
-    protected CompletableFuture<Boolean> uploadFileAsync(String directoryPath, String s3Prefix) throws Exception {
+    protected CompletableFuture<Boolean> uploadFileAsync(
+            String directoryPath, String s3Prefix, Boolean isCompress) throws Exception {
         // Create a File object to check existence
         File directory = new File(directoryPath);
 
@@ -219,9 +230,10 @@ public class NeptuneBulkLoader implements AutoCloseable {
         System.err.println("Starting sequential upload of files from " +
             directoryPath + " to s3://" + bucketName + "/" + s3Prefix);
 
-        // Get all CSV files in the directory
+        // Get all files in the directory with the specified extension
+        String targetExtension = isCompress ? ".gz" : ".csv";
         File[] csvFiles = directory.listFiles((dir, name) ->
-            name.toLowerCase().endsWith(".csv") || name.toLowerCase().endsWith(".gz"));
+            name.toLowerCase().endsWith(targetExtension));
 
         if (csvFiles == null || csvFiles.length == 0) {
             System.err.println("No files with correct extension were found in " + directoryPath);
@@ -288,9 +300,7 @@ public class NeptuneBulkLoader implements AutoCloseable {
 
         String s3SourceUri = "s3://" + bucketName + "/" + s3Prefix;
         System.err.println("Starting async upload of " + localFilePath + " to " + s3SourceUri);
-
         System.err.println("File size: " + file.length() + " Bytes");
-        System.err.println("Using S3 Transfer Manager for upload...");
 
         try {
             UploadFileRequest uploadRequest = UploadFileRequest.builder()

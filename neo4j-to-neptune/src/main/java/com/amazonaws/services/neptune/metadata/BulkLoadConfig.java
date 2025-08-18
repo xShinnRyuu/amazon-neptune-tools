@@ -43,9 +43,11 @@ public class BulkLoadConfig {
     private String iamRoleArn;
     private String parallelism;
     private boolean monitor;
+    private boolean compress;
+    private boolean compressDelete;
     private static final String DEFAULT_S3_PREFIX = "";
     private static final String DEFAULT_PARALLELISM = "OVERSUBSCRIBE";
-    private static final boolean DEFAULT_MONITOR = false;
+    private static final boolean DEFAULT_BOOLEAN_FALSE = false;
 
     public static BulkLoadConfig fromFile(File configFile) throws IOException {
         BulkLoadConfig config = new BulkLoadConfig();
@@ -68,7 +70,9 @@ public class BulkLoadConfig {
             this.neptuneEndpoint = getStringValue(yamlData, "neptune-endpoint");
             this.iamRoleArn = getStringValue(yamlData, "iam-role-arn");
             this.parallelism = getStringValue(yamlData, "parallelism", DEFAULT_PARALLELISM);
-            this.monitor = getBooleanValue(yamlData, "monitor", DEFAULT_MONITOR);
+            this.monitor = getBooleanValue(yamlData, "monitor", DEFAULT_BOOLEAN_FALSE);
+            this.compress = getBooleanValue(yamlData, "compress", DEFAULT_BOOLEAN_FALSE);
+            this.compressDelete = getBooleanValue(yamlData, "compress-delete", DEFAULT_BOOLEAN_FALSE);
         }
     }
 
