@@ -19,7 +19,6 @@ import software.amazon.awssdk.transfer.s3.S3TransferManager;
 import software.amazon.awssdk.transfer.s3.model.CompletedFileUpload;
 import software.amazon.awssdk.transfer.s3.model.FileUpload;
 import software.amazon.awssdk.transfer.s3.model.UploadFileRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
@@ -83,6 +82,9 @@ public class NeptuneBulkLoaderTest {
         assertTrue("Should contain IAM role ARN", error.contains("IAM Role ARN: " + TestDataProvider.IAM_ROLE_ARN));
         assertTrue("Should contain Neptune endpoint", error.contains("Neptune Endpoint: " + TestDataProvider.NEPTUNE_ENDPOINT));
         assertTrue("Should contain Neptune bulk load parallelism", error.contains("Bulk Load Parallelism: " + TestDataProvider.BULK_LOAD_PARALLELISM_MEDIUM));
+        assertTrue("Should contain bulk load monitor setting", error.contains("Bulk Load Monitor: " + TestDataProvider.BOOLEAN_FALSE));
+        assertTrue("Should contain compress setting", error.contains("Compress: " + TestDataProvider.BOOLEAN_FALSE));
+        assertTrue("Should contain compress delete setting", error.contains("Compress Delete Original: " + TestDataProvider.BOOLEAN_FALSE));
         assertNotNull("NeptuneBulkLoader should be created", neptuneBulkLoader);
     }
 
@@ -96,7 +98,7 @@ public class NeptuneBulkLoaderTest {
 
         for (String parallelism : validParallelismValues) {
             BulkLoadConfig bulkLoadConfig = TestDataProvider.createBulkLoadConfig(
-                TestDataProvider.BUCKET, TestDataProvider.S3_PREFIX, TestDataProvider.NEPTUNE_ENDPOINT, TestDataProvider.IAM_ROLE_ARN, parallelism, TestDataProvider.BULK_LOAD_MONITOR_FALSE);
+                TestDataProvider.BUCKET, TestDataProvider.S3_PREFIX, TestDataProvider.NEPTUNE_ENDPOINT, TestDataProvider.IAM_ROLE_ARN, parallelism, TestDataProvider.BOOLEAN_FALSE);
             // Create NeptuneBulkLoader with each parallelism value
             NeptuneBulkLoader loader = new NeptuneBulkLoader(bulkLoadConfig);
 
@@ -116,7 +118,7 @@ public class NeptuneBulkLoaderTest {
     @Test
     public void testConstructorWithEmptyS3Prefix() {
         BulkLoadConfig bulkLoadConfig = TestDataProvider.createBulkLoadConfig(
-            TestDataProvider.BUCKET, "", TestDataProvider.NEPTUNE_ENDPOINT, TestDataProvider.IAM_ROLE_ARN, TestDataProvider.BULK_LOAD_PARALLELISM_MEDIUM, TestDataProvider.BULK_LOAD_MONITOR_FALSE);
+            TestDataProvider.BUCKET, "", TestDataProvider.NEPTUNE_ENDPOINT, TestDataProvider.IAM_ROLE_ARN, TestDataProvider.BULK_LOAD_PARALLELISM_MEDIUM, TestDataProvider.BOOLEAN_FALSE);
             // Create NeptuneBulkLoader with blank s3prefix
             NeptuneBulkLoader loader = new NeptuneBulkLoader(bulkLoadConfig);
 
@@ -284,7 +286,7 @@ public class NeptuneBulkLoaderTest {
         doReturn(successFuture).when(spyLoader).uploadSingleFileAsync(anyString(), anyString());
 
         // Test upload
-        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), false);
 
         // Verify both files were uploaded (vertices.csv and edges.csv)
         verify(spyLoader, times(2)).uploadSingleFileAsync(anyString(), anyString());
@@ -331,7 +333,7 @@ public class NeptuneBulkLoaderTest {
             anyString()
         );
 
-        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), anyBoolean());
         // Verify error message
         String error = errorStream.toString();
         assertTrue("Should contain upload message",
@@ -358,7 +360,7 @@ public class NeptuneBulkLoaderTest {
             anyString()
         );
 
-        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), anyBoolean());
         // Verify error message
         String error = errorStream.toString();
         assertTrue("Should contain upload message",
@@ -377,7 +379,7 @@ public class NeptuneBulkLoaderTest {
         doReturn(failureFuture).when(spyLoader).uploadSingleFileAsync(anyString(), anyString());
 
         // Test upload - should throw RuntimeException
-        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), anyBoolean());
         String error = errorStream.toString();
         assertTrue("Should contain upload message",
             error.contains("Upload failures - Vertices: 1, Edges: 1"));
@@ -396,7 +398,7 @@ public class NeptuneBulkLoaderTest {
         doReturn(exceptionFuture).when(spyLoader).uploadSingleFileAsync(anyString(), anyString());
 
         try {
-            spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+            spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), false);
             fail("Expected exception to be thrown");
         } catch (Exception e) {
             // Verify the exception is properly propagated
@@ -417,7 +419,7 @@ public class NeptuneBulkLoaderTest {
         doReturn(successFuture).when(spyLoader).uploadSingleFileAsync(anyString(), anyString());
 
         // Test upload
-        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+        spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), false);
 
         // Extract timestamp from directory name
         String expectedTimestamp = testDir.getName();
@@ -443,10 +445,10 @@ public class NeptuneBulkLoaderTest {
 
         // Mock uploadFileAsync to return failure (directory-based approach)
         CompletableFuture<Boolean> failureFuture = CompletableFuture.completedFuture(false);
-        doReturn(failureFuture).when(spyLoader).uploadFileAsync(anyString(), anyString());
+        doReturn(failureFuture).when(spyLoader).uploadFileAsync(anyString(), anyString(), anyBoolean());
 
         try {
-            spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath());
+            spyLoader.uploadCsvFilesToS3(testDir.getAbsolutePath(), false);
             fail("Expected RuntimeException to be thrown");
         } catch (RuntimeException e) {
             // Verify error messages
@@ -1558,7 +1560,8 @@ public class NeptuneBulkLoaderTest {
         try {
             CompletableFuture<Boolean> result = neptuneBulkLoader.uploadFileAsync(
                 testDir.getAbsolutePath(),
-                TestDataProvider.S3_PREFIX + "/test-upload"
+                TestDataProvider.S3_PREFIX + "/test-upload",
+                TestDataProvider.BOOLEAN_FALSE
             );
 
             // The method should return a CompletableFuture
@@ -1616,7 +1619,8 @@ public class NeptuneBulkLoaderTest {
         try {
             CompletableFuture<Boolean> result = neptuneBulkLoader.uploadFileAsync(
                 testDir.getAbsolutePath(),
-                TestDataProvider.S3_PREFIX + "/test-upload"
+                TestDataProvider.S3_PREFIX + "/test-upload",
+                TestDataProvider.BOOLEAN_FALSE
             );
 
             // Wait for the future to complete and expect it to return false due to exception
@@ -1642,7 +1646,10 @@ public class NeptuneBulkLoaderTest {
     public void testUploadFileAsyncWithNonExistentDirectory() throws Exception {
         NeptuneBulkLoader neptuneBulkLoader = TestDataProvider.createNeptuneBulkLoader();
 
-        neptuneBulkLoader.uploadFileAsync("/non/existent/directory", TestDataProvider.S3_PREFIX);
+        neptuneBulkLoader.uploadFileAsync(
+            "/non/existent/directory",
+            TestDataProvider.S3_PREFIX,
+            TestDataProvider.BOOLEAN_FALSE);
     }
 
     @Test
@@ -1659,7 +1666,8 @@ public class NeptuneBulkLoaderTest {
 
         CompletableFuture<Boolean> result = neptuneBulkLoader.uploadFileAsync(
             testDir.getAbsolutePath(),
-            TestDataProvider.S3_PREFIX
+            TestDataProvider.S3_PREFIX,
+            TestDataProvider.BOOLEAN_FALSE
         );
 
         // Should return false for empty directory
@@ -1718,7 +1726,8 @@ public class NeptuneBulkLoaderTest {
 
         CompletableFuture<Boolean> result = neptuneBulkLoader.uploadFileAsync(
             testDir.getAbsolutePath(),
-            TestDataProvider.S3_PREFIX + "/test-upload"
+            TestDataProvider.S3_PREFIX + "/test-upload",
+            TestDataProvider.BOOLEAN_FALSE
         );
 
         // Should return false due to partial failure

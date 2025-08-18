@@ -61,8 +61,8 @@ public class TestDataProvider {
     public static final String BULK_LOAD_PARALLELISM_MEDIUM = "MEDIUM";
     public static final String BULK_LOAD_PARALLELISM_HIGH = "HIGH";
     public static final String BULK_LOAD_PARALLELISM_OVERSUBSCRIBE = "OVERSUBSCRIBE";
-    public static final Boolean BULK_LOAD_MONITOR_TRUE = true;
-    public static final Boolean BULK_LOAD_MONITOR_FALSE = false;
+    public static final Boolean BOOLEAN_TRUE = true;
+    public static final Boolean BOOLEAN_FALSE = false;
 
     // Load status constants - completed statuses
     public static final String LOAD_COMPLETED = "LOAD_COMPLETED";
@@ -96,12 +96,14 @@ public class TestDataProvider {
         bulkLoadConfig.setIamRoleArn(iamRoleArn);
         bulkLoadConfig.setParallelism(parallelism);
         bulkLoadConfig.setMonitor(monitor);
+        bulkLoadConfig.setCompress(false);
+        bulkLoadConfig.setCompressDelete(false);
         return bulkLoadConfig;
     }
 
     public static NeptuneBulkLoader createNeptuneBulkLoader() {
         BulkLoadConfig bulkLoadConfig =
-            createBulkLoadConfig(BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BULK_LOAD_MONITOR_FALSE);
+            createBulkLoadConfig(BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BOOLEAN_FALSE);
         try (NeptuneBulkLoader loader = new NeptuneBulkLoader(bulkLoadConfig)) {
             return loader;
         }
@@ -115,7 +117,7 @@ public class TestDataProvider {
      */
     public static NeptuneBulkLoader createNeptuneBulkLoader(HttpClient httpClient, S3TransferManager transferManager) {
         BulkLoadConfig bulkLoadConfig =
-            createBulkLoadConfig(BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BULK_LOAD_MONITOR_FALSE);
+            createBulkLoadConfig(BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BOOLEAN_FALSE);
         return new NeptuneBulkLoader(
             bulkLoadConfig,
             httpClient,
@@ -203,5 +205,105 @@ public class TestDataProvider {
         return VertexMetadata.parse(
                 CSVUtils.firstRecord(columnHeaders),
                 new PropertyValueParser(MultiValuedNodePropertyPolicy.PutInSetIgnoringDuplicates, "", false), config);
+    }
+
+    // ========== GZIP COMPRESSION TEST UTILITIES ==========
+
+    /**
+     * Test data constants for compression tests
+     */
+    public static final String SAMPLE_CSV_CONTENT_SIMPLE = "header1,header2\nvalue1,value2\nvalue3,value4";
+    public static final String SAMPLE_CSV_CONTENT_NAMES = "name,age\nJohn,25\nJane,30";
+    public static final String SAMPLE_CSV_CONTENT_SINGLE_COL = "col1,col2\nval1,val2";
+    public static final String SAMPLE_CSV_CONTENT_HEADER_ONLY = "header\nvalue";
+    public static final String SAMPLE_CSV_CONTENT_ID = "id\n123";
+    public static final String SAMPLE_CSV_CONTENT_DATA = "data\nvalue";
+    public static final String SAMPLE_CSV_CONTENT_EMPTY = "";
+    public static final String SAMPLE_CSV_CONTENT_SINGLE_CHAR = "a";
+
+    /**
+     * Creates repetitive CSV content for compression ratio testing
+     * @param rows Number of rows to generate
+     * @return CSV content with repetitive data
+     */
+    public static String createRepetitiveCsvContent(int rows) {
+        StringBuilder content = new StringBuilder();
+        for (int i = 0; i < rows; i++) {
+            content.append("same,data,repeated,multiple,times\n");
+        }
+        return content.toString();
+    }
+
+    /**
+     * Creates large CSV content for buffer size testing
+     * @param rows Number of rows to generate
+     * @return CSV content with multiple columns
+     */
+    public static String createLargeCsvContent(int rows) {
+        StringBuilder content = new StringBuilder();
+        String row = "column1,column2,column3,column4,column5\n";
+        for (int i = 0; i < rows; i++) {
+            content.append(row);
+        }
+        return content.toString();
+    }
+
+    /**
+     * Creates a test CSV file with specified content
+     * @param directory The directory where the file should be created
+     * @param filename The name of the CSV file
+     * @param content The content to write to the file
+     * @return The created File object
+     * @throws IOException If file creation fails
+     */
+    public static File createTestCsvFile(File directory, String filename, String content) throws IOException {
+        File csvFile = new File(directory, filename);
+        try (java.io.FileWriter writer = new java.io.FileWriter(csvFile)) {
+            writer.write(content);
+        }
+        return csvFile;
+    }
+
+    /**
+     * Decompresses a GZIP file and returns its content as a string
+     * @param gzipFile The GZIP file to decompress
+     * @return The decompressed content as a string
+     * @throws IOException If decompression fails
+     */
+    public static String decompressGzipFile(File gzipFile) throws IOException {
+        StringBuilder content = new StringBuilder();
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(gzipFile);
+             java.util.zip.GZIPInputStream gzis = new java.util.zip.GZIPInputStream(fis);
+             java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(gzis))) {
+
+            String line;
+            boolean first = true;
+            while ((line = reader.readLine()) != null) {
+                if (!first) {
+                    content.append("\n");
+                }
+                content.append(line);
+                first = false;
+            }
+        }
+        return content.toString();
+    }
+
+    /**
+     * Captures System.err output for testing console output
+     * @return ByteArrayOutputStream that captures the output
+     */
+    public static java.io.ByteArrayOutputStream captureSystemErr() {
+        java.io.ByteArrayOutputStream capturedOutput = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(capturedOutput));
+        return capturedOutput;
+    }
+
+    /**
+     * Restores the original System.err
+     * @param originalErr The original PrintStream to restore
+     */
+    public static void restoreSystemErr(java.io.PrintStream originalErr) {
+        System.setErr(originalErr);
     }
 }
