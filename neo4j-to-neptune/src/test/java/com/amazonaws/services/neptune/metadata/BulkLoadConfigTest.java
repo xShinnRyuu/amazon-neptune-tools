@@ -50,8 +50,6 @@ public class BulkLoadConfigTest {
         assertEquals(TestDataProvider.IAM_ROLE_ARN, config.getIamRoleArn());
         assertEquals(TestDataProvider.BULK_LOAD_PARALLELISM_LOW, config.getParallelism());
         assertTrue(config.isMonitor());
-        assertTrue(config.isCompress());
-        assertFalse(config.isCompressDelete());
     }
 
     @Test
@@ -77,8 +75,6 @@ public class BulkLoadConfigTest {
         assertEquals("", config.getS3Prefix());
         assertEquals("OVERSUBSCRIBE", config.getParallelism());
         assertFalse(config.isMonitor());
-        assertFalse(config.isCompress());
-        assertFalse(config.isCompressDelete());
     }
 
     @Test
@@ -100,8 +96,6 @@ public class BulkLoadConfigTest {
         assertNull(config.getIamRoleArn());
         assertNull(config.getParallelism());
         assertFalse(config.isMonitor());
-        assertFalse(config.isCompress());
-        assertFalse(config.isCompressDelete());
     }
 
     @Test
@@ -116,8 +110,6 @@ public class BulkLoadConfigTest {
         assertNull(config.getIamRoleArn());
         assertNull(config.getParallelism());
         assertFalse(config.isMonitor());
-        assertFalse(config.isCompress());
-        assertFalse(config.isCompressDelete());
     }
 
     @Test
@@ -360,104 +352,5 @@ public class BulkLoadConfigTest {
         assertTrue(toString.contains("BulkLoadConfig"));
         assertTrue(toString.contains(TestDataProvider.BUCKET));
         assertTrue(toString.contains(TestDataProvider.NEPTUNE_ENDPOINT));
-    }
-
-    @Test
-    public void testCompressFieldsYamlConfiguration() throws IOException {
-        // Test compress and compressDelete fields with various boolean values
-        File tempFile = File.createTempFile("test-compress", ".yaml");
-        tempFile.deleteOnExit();
-
-        try (FileWriter writer = new FileWriter(tempFile)) {
-            writer.write("bucket-name: \"" + TestDataProvider.BUCKET + "\"\n");
-            writer.write("neptune-endpoint: \"" + TestDataProvider.NEPTUNE_ENDPOINT + "\"\n");
-            writer.write("iam-role-arn: \"" + TestDataProvider.IAM_ROLE_ARN + "\"\n");
-            writer.write("compress: " + TestDataProvider.BOOLEAN_TRUE + "\n");
-            writer.write("compress-delete: " + TestDataProvider.BOOLEAN_FALSE + "\n");
-        }
-
-        BulkLoadConfig config = BulkLoadConfig.fromFile(tempFile);
-
-        assertTrue("compress should be true", config.isCompress());
-        assertFalse("compress-delete should be false", config.isCompressDelete());
-    }
-
-    @Test
-    public void testCompressFieldsDefaultValues() throws IOException {
-        // Test that compress fields default to false when not specified
-        File tempFile = File.createTempFile("test-compress-defaults", ".yaml");
-        tempFile.deleteOnExit();
-
-        try (FileWriter writer = new FileWriter(tempFile)) {
-            writer.write("bucket-name: \"" + TestDataProvider.BUCKET + "\"\n");
-            writer.write("neptune-endpoint: \"" + TestDataProvider.NEPTUNE_ENDPOINT + "\"\n");
-            writer.write("iam-role-arn: \"" + TestDataProvider.IAM_ROLE_ARN + "\"\n");
-            // Intentionally omit compress and compress-delete fields
-        }
-
-        BulkLoadConfig config = BulkLoadConfig.fromFile(tempFile);
-
-        assertFalse("compress should default to false", config.isCompress());
-        assertFalse("compress-delete should default to false", config.isCompressDelete());
-    }
-
-    @Test
-    public void testCompressFieldsBothTrue() throws IOException {
-        // Test both compress fields set to true
-        File tempFile = File.createTempFile("test-compress-both-true", ".yaml");
-        tempFile.deleteOnExit();
-
-        try (FileWriter writer = new FileWriter(tempFile)) {
-            writer.write("bucket-name: \"" + TestDataProvider.BUCKET + "\"\n");
-            writer.write("neptune-endpoint: \"" + TestDataProvider.NEPTUNE_ENDPOINT + "\"\n");
-            writer.write("iam-role-arn: \"" + TestDataProvider.IAM_ROLE_ARN + "\"\n");
-            writer.write("compress: " + TestDataProvider.BOOLEAN_TRUE + "\n");
-            writer.write("compress-delete: " + TestDataProvider.BOOLEAN_TRUE + "\n");
-        }
-
-        BulkLoadConfig config = BulkLoadConfig.fromFile(tempFile);
-
-        assertTrue("compress should be true", config.isCompress());
-        assertTrue("compress-delete should be true", config.isCompressDelete());
-    }
-
-    @Test
-    public void testCompressFieldsBothFalse() throws IOException {
-        // Test both compress fields explicitly set to false
-        File tempFile = File.createTempFile("test-compress-both-false", ".yaml");
-        tempFile.deleteOnExit();
-
-        try (FileWriter writer = new FileWriter(tempFile)) {
-            writer.write("bucket-name: \"" + TestDataProvider.BUCKET + "\"\n");
-            writer.write("neptune-endpoint: \"" + TestDataProvider.NEPTUNE_ENDPOINT + "\"\n");
-            writer.write("iam-role-arn: \"" + TestDataProvider.IAM_ROLE_ARN + "\"\n");
-            writer.write("compress: " + TestDataProvider.BOOLEAN_FALSE + "\n");
-            writer.write("compress-delete: " + TestDataProvider.BOOLEAN_FALSE + "\n");
-        }
-
-        BulkLoadConfig config = BulkLoadConfig.fromFile(tempFile);
-
-        assertFalse("compress should be false", config.isCompress());
-        assertFalse("compress-delete should be false", config.isCompressDelete());
-    }
-
-    @Test
-    public void testCompressFieldsIndependence() throws IOException {
-        // Test that compress and compress-delete fields are independent
-        File tempFile = File.createTempFile("test-compress-independence", ".yaml");
-        tempFile.deleteOnExit();
-
-        try (FileWriter writer = new FileWriter(tempFile)) {
-            writer.write("bucket-name: \"" + TestDataProvider.BUCKET + "\"\n");
-            writer.write("neptune-endpoint: \"" + TestDataProvider.NEPTUNE_ENDPOINT + "\"\n");
-            writer.write("iam-role-arn: \"" + TestDataProvider.IAM_ROLE_ARN + "\"\n");
-            writer.write("compress: " + TestDataProvider.BOOLEAN_FALSE + "\n");
-            writer.write("compress-delete: " + TestDataProvider.BOOLEAN_TRUE + "\n");
-        }
-
-        BulkLoadConfig config = BulkLoadConfig.fromFile(tempFile);
-
-        assertFalse("compress should be false", config.isCompress());
-        assertTrue("compress-delete should be true", config.isCompressDelete());
     }
 }
