@@ -13,6 +13,8 @@ permissions and limitations under the License.
 package com.amazonaws.services.neptune.util;
 
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.async.AsyncRequestBodyFromInputStreamConfiguration;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
@@ -20,21 +22,29 @@ import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
-import software.amazon.awssdk.transfer.s3.model.FileUpload;
-import software.amazon.awssdk.transfer.s3.model.UploadFileRequest;
+import software.amazon.awssdk.transfer.s3.model.UploadRequest;
+import software.amazon.awssdk.transfer.s3.model.Upload;
 
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.zip.GZIPOutputStream;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.amazonaws.services.neptune.metadata.BulkLoadConfig;
@@ -84,8 +94,6 @@ public class NeptuneBulkLoader implements AutoCloseable {
     private final String iamRoleArn;
     private final String parallelism;
     private final Boolean monitor;
-    private final Boolean compress;
-    private final Boolean compressDelete;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -97,8 +105,6 @@ public class NeptuneBulkLoader implements AutoCloseable {
         this.iamRoleArn = bulkLoadConfig.getIamRoleArn();
         this.parallelism = bulkLoadConfig.getParallelism().toUpperCase();
         this.monitor = bulkLoadConfig.isMonitor();
-        this.compress = bulkLoadConfig.isCompress();
-        this.compressDelete = bulkLoadConfig.isCompressDelete();
 
         // Initialize clients
         this.objectMapper = new ObjectMapper();
@@ -161,8 +167,6 @@ public class NeptuneBulkLoader implements AutoCloseable {
         System.err.println("Neptune Endpoint: " + this.neptuneEndpoint);
         System.err.println("Bulk Load Parallelism: " + this.parallelism);
         System.err.println("Bulk Load Monitor: " + this.monitor);
-        System.err.println("Compress: " + this.compress);
-        System.err.println("Compress Delete Original: " + this.compressDelete);
         System.err.println();
     }
 
@@ -175,8 +179,6 @@ public class NeptuneBulkLoader implements AutoCloseable {
         this.iamRoleArn = bulkLoadConfig.getIamRoleArn();
         this.parallelism = bulkLoadConfig.getParallelism();
         this.monitor = bulkLoadConfig.isMonitor();
-        this.compress = bulkLoadConfig.isCompress();
-        this.compressDelete = bulkLoadConfig.isCompressDelete();
         this.objectMapper = new ObjectMapper();
         this.transferManager = transferManager;
         this.httpClient = httpClient;
@@ -185,7 +187,7 @@ public class NeptuneBulkLoader implements AutoCloseable {
     /**
      * Upload Neptune vertices and edges CSV files asynchronously
      */
-    public String uploadCsvFilesToS3(String filePath, Boolean isCompress) throws Exception {
+    public String uploadCsvFilesToS3(String filePath) throws Exception {
         System.err.println("Uploading Gremlin load data to S3...");
 
         // Grab the timestamp of ConvertCsv to use as S3 directory prefix
@@ -198,18 +200,16 @@ public class NeptuneBulkLoader implements AutoCloseable {
             .orElse("") + convertCsvTimeStamp;
 
         // Upload all files from the directory
-        CompletableFuture<Boolean> uploadFuture =
-            uploadFileAsync(filePath, s3PrefixWithTimeStamp, isCompress);
+        CompletableFuture<Boolean> uploadFuture = uploadFileAsync(filePath, s3PrefixWithTimeStamp);
 
-        // Wait for upload to complete
-        uploadFuture.get();
-
-        // Check result
+        // Wait for upload to complete - this will throw if compression or upload failed
         boolean uploadSuccess = uploadFuture.get();
+
         if (!uploadSuccess) {
             System.err.println("CSV file uploads failed from directory: " + filePath);
             throw new RuntimeException("One or more CSV uploads failed.");
         }
+
         String uploadS3Uri = "s3://" + bucketName + "/" + s3PrefixWithTimeStamp+ "/";
         System.err.println("Files uploaded successfully to S3. Files available at: " + uploadS3Uri);
         return uploadS3Uri;
@@ -218,8 +218,7 @@ public class NeptuneBulkLoader implements AutoCloseable {
     /**
      * Upload all files from a directory to S3 sequentially to avoid connection pool exhaustion
      */
-    protected CompletableFuture<Boolean> uploadFileAsync(
-            String directoryPath, String s3Prefix, Boolean isCompress) throws Exception {
+    protected CompletableFuture<Boolean> uploadFileAsync(String directoryPath, String s3Prefix) throws Exception {
         // Create a File object to check existence
         File directory = new File(directoryPath);
 
@@ -231,21 +230,12 @@ public class NeptuneBulkLoader implements AutoCloseable {
             directoryPath + " to s3://" + bucketName + "/" + s3Prefix);
 
         // Get all files in the directory with the specified extension
-        String targetExtension = isCompress ? ".gz" : ".csv";
-        File[] csvFiles = directory.listFiles((dir, name) ->
-            name.toLowerCase().endsWith(targetExtension));
+        File[] csvFiles = directory.listFiles((dir, name) -> name.toLowerCase().endsWith(".csv"));
 
         if (csvFiles == null || csvFiles.length == 0) {
             System.err.println("No files with correct extension were found in " + directoryPath);
             return CompletableFuture.completedFuture(false);
         }
-
-        // Sort files to upload vertices first, then edges (for better organization)
-        java.util.Arrays.sort(csvFiles, (a, b) -> {
-            if (a.getName().contains("vertices") && b.getName().contains("edges")) return -1;
-            if (a.getName().contains("edges") && b.getName().contains("vertices")) return 1;
-            return a.getName().compareTo(b.getName());
-        });
 
         // Upload files sequentially to avoid connection pool exhaustion
         return uploadFilesSequentially(csvFiles, s3Prefix, 0);
@@ -266,7 +256,8 @@ public class NeptuneBulkLoader implements AutoCloseable {
         System.err.println("Uploading file " + (index + 1) + " of " + files.length + ": " + currentFile.getName());
 
         try {
-            CompletableFuture<Boolean> currentUpload = uploadSingleFileAsync(currentFile.getAbsolutePath(), csvFilePath);
+            CompletableFuture<Boolean> currentUpload =
+                uploadSingleFileAsync(currentFile.getAbsolutePath(), csvFilePath);
 
             return currentUpload.thenCompose(success -> {
                 if (!success) {
@@ -282,64 +273,113 @@ public class NeptuneBulkLoader implements AutoCloseable {
             });
 
         } catch (Exception e) {
-            System.err.println("Error initiating upload for " + currentFile.getName() + ": " + e.getMessage());
-            return CompletableFuture.completedFuture(false);
+            logUploadError(currentFile.getAbsolutePath(), e);
+            // Convert to failed CompletableFuture to preserve async chain and fail-fast behavior
+            CompletableFuture<Boolean> failedFuture = new CompletableFuture<>();
+            failedFuture.completeExceptionally(e);
+            return failedFuture;
         }
     }
 
     /**
-     * Upload a single CSV file to S3 asynchronously using S3TransferManager
+     * Upload a single CSV file to S3 asynchronously using S3TransferManager with in-flight compression
      */
     protected CompletableFuture<Boolean> uploadSingleFileAsync(String localFilePath, String s3Prefix) throws Exception {
-        // Create a File object to check existence
-        File file = new File(localFilePath);
-
-        if (!file.exists() || !file.isFile()) {
+        File localFile = new File(localFilePath);
+        if (!localFile.exists() || !localFile.isFile()) {
             throw new IllegalStateException("File does not exist: " + localFilePath);
         }
 
-        String s3SourceUri = "s3://" + bucketName + "/" + s3Prefix;
+        String s3Key = s3Prefix + ".gz";
+        String s3SourceUri = "s3://" + bucketName + "/" + s3Key;
         System.err.println("Starting async upload of " + localFilePath + " to " + s3SourceUri);
-        System.err.println("File size: " + file.length() + " Bytes");
+        System.err.println("File size: " + Utils.formatFileSize(localFile.length()));
 
-        try {
-            UploadFileRequest uploadRequest = UploadFileRequest.builder()
-                    .putObjectRequest(PutObjectRequest.builder()
-                            .bucket(bucketName)
-                            .key(s3Prefix)
-                            .contentType(file.getName().endsWith(".gz") ? "application/gzip" : "text/csv")
-                            .build())
-                    .source(Paths.get(localFilePath))
-                    .build();
+        try (PipedOutputStream pipedOut = new PipedOutputStream();
+             PipedInputStream pipedIn = new PipedInputStream(pipedOut);
+             ExecutorService streamExecutor = Executors.newSingleThreadExecutor()) {
 
-            System.err.println("Initiating Transfer Manager upload...");
-            FileUpload upload = transferManager.uploadFile(uploadRequest);
+            CompletableFuture<Void> compressionFuture = startCompressionTask(localFile, pipedOut);
+            UploadRequest uploadRequest = createUploadRequest(s3Key, pipedIn, streamExecutor);
 
-            // Return a future that resolves to boolean success
-            return upload.completionFuture().handle((completedUpload, throwable) -> {
-                if (throwable != null) {
-                    System.err.println("Transfer Manager upload failed for " + localFilePath);
-                    System.err.println("Error type: " + throwable.getClass().getSimpleName());
-                    System.err.println("Error message: " + throwable.getMessage());
+            System.err.println("Initiating Transfer Manager upload with compression...");
+            Upload upload = transferManager.upload(uploadRequest);
 
-                    if (throwable.getCause() instanceof S3Exception) {
-                        S3Exception s3Exception = (S3Exception) throwable.getCause();
-                        System.err.println("S3 error code: " + s3Exception.awsErrorDetails().errorCode());
-                        System.err.println("S3 error message: " + s3Exception.awsErrorDetails().errorMessage());
-                        System.err.println("S3 status code: " + s3Exception.statusCode());
-                    }
-                    return false;
-                } else {
-                    System.err.println("Successfully uploaded " + file.getName() + " using Transfer Manager - ETag: " +
-                            completedUpload.response().eTag());
+            // Wait for BOTH upload and compression to complete - fail if either fails
+            return CompletableFuture.allOf(upload.completionFuture(), compressionFuture)
+                .thenApply(ignored -> {
+                    System.err.println(
+                        "Successfully uploaded " + localFile.getName() +
+                        " (compressed) - ETag: " + upload.completionFuture().join().response().eTag());
                     return true;
-                }
-            });
+                })
+                .exceptionally(throwable -> {
+                    logUploadError(localFilePath, throwable);
+                    // Re-throw to maintain fail-fast behavior
+                    if (throwable instanceof RuntimeException) {
+                        throw (RuntimeException) throwable;
+                    } else {
+                        throw new RuntimeException("Upload or compression failed", throwable);
+                    }
+                });
+        }
+    }
 
-        } catch (Exception e) {
-            System.err.println("Error initiating Transfer Manager upload for " + localFilePath + ": " + e.getMessage());
-            e.printStackTrace();
-            return CompletableFuture.completedFuture(false);
+    /**
+     * Start the compression task in a background thread
+     */
+    protected CompletableFuture<Void> startCompressionTask(File localFile, PipedOutputStream pipedOut) {
+        return CompletableFuture.runAsync(() -> {
+            try (GZIPOutputStream gzipOut = new GZIPOutputStream(pipedOut);
+                 FileInputStream fis = new FileInputStream(localFile);
+                 BufferedInputStream fileIn = new BufferedInputStream(fis)) {
+
+                // Use same buffer size as GzipCompressUtils for consistency
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = fileIn.read(buffer)) != -1) {
+                    gzipOut.write(buffer, 0, bytesRead);
+                }
+                gzipOut.finish();
+
+            } catch (IOException e) {
+                throw new UncheckedIOException("Compression failed for " + localFile.getAbsolutePath(), e);
+            }
+        });
+    }
+
+    /**
+     * Create the S3 upload request with compressed stream
+     */
+    private UploadRequest createUploadRequest(String s3Key, PipedInputStream pipedIn, ExecutorService streamExecutor) {
+        return UploadRequest.builder()
+            .putObjectRequest(PutObjectRequest.builder()
+                .bucket(bucketName)
+                .key(s3Key)
+                .contentType("application/gzip")
+                .build())
+            .requestBody(AsyncRequestBody.fromInputStream(
+                AsyncRequestBodyFromInputStreamConfiguration.builder()
+                    .inputStream(pipedIn)
+                    .executor(streamExecutor)
+                    .build()
+            ))
+            .build();
+    }
+
+    /**
+     * Log upload error details
+     */
+    private void logUploadError(String localFilePath, Throwable throwable) {
+        System.err.println("Transfer Manager upload failed for " + localFilePath);
+        System.err.println("Error type: " + throwable.getClass().getSimpleName());
+        System.err.println("Error message: " + throwable.getMessage());
+
+        if (throwable.getCause() instanceof S3Exception) {
+            S3Exception s3Exception = (S3Exception) throwable.getCause();
+            System.err.println("S3 error code: " + s3Exception.awsErrorDetails().errorCode());
+            System.err.println("S3 error message: " + s3Exception.awsErrorDetails().errorMessage());
+            System.err.println("S3 status code: " + s3Exception.statusCode());
         }
     }
 

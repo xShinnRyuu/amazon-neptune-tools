@@ -17,7 +17,6 @@ import com.amazonaws.services.neptune.io.Neo4jStreamWriter;
 import com.amazonaws.services.neptune.io.OutputFile;
 import com.amazonaws.services.neptune.metadata.*;
 import com.amazonaws.services.neptune.util.CSVUtils;
-import com.amazonaws.services.neptune.util.GzipCompressUtils;
 import com.amazonaws.services.neptune.util.NeptuneBulkLoader;
 import com.amazonaws.services.neptune.util.Timer;
 import com.github.rvesse.airline.annotations.Command;
@@ -140,16 +139,6 @@ public class ConvertCsv implements Runnable {
     @Once
     private boolean monitor;
 
-    @Option(name = {"--compress"}, description = "Allow gzip compression on converted .csv files before S3 upload (default: false). " +
-        "Overrides compress from bulk-load-config file if both are provided.")
-    @Once
-    private boolean compress;
-
-    @Option(name = {"--compress-delete"}, description = "Allow deletion of original file after gzip compression (default: false). " +
-        "Overrides compress-delete from bulk-load-config file if both are provided.")
-    @Once
-    private boolean compressDelete;
-
     @Override
     public void run() {
         try {
@@ -211,11 +200,7 @@ public class ConvertCsv implements Runnable {
                 try (NeptuneBulkLoader neptuneBulkLoader = new NeptuneBulkLoader(bulkLoadConfig)) {
 
                     String uri = directories.outputDirectory().toFile().getAbsolutePath();
-                    if (bulkLoadConfig.isCompress()) {
-                        // Compress CSV files before uploading to S3
-                        GzipCompressUtils.compressCsvFiles(uri, bulkLoadConfig.isCompressDelete());
-                    }
-                    String s3SourceUri = neptuneBulkLoader.uploadCsvFilesToS3(uri, bulkLoadConfig.isCompress());
+                    String s3SourceUri = neptuneBulkLoader.uploadCsvFilesToS3(uri);
                     String loadId = neptuneBulkLoader.startNeptuneBulkLoad(s3SourceUri);
 
                     if (bulkLoadConfig.isMonitor()) {
@@ -259,14 +244,6 @@ public class ConvertCsv implements Runnable {
 
         if (monitor) {
             config.setMonitor(monitor);
-        }
-
-        if (compress) {
-            config.setCompress(compress);
-        }
-
-        if (compressDelete) {
-            config.setCompressDelete(compressDelete);
         }
 
         BulkLoadConfig.validateBulkLoadConfigFile(config);
