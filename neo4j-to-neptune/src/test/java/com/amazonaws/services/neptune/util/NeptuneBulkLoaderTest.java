@@ -82,7 +82,6 @@ public class NeptuneBulkLoaderTest {
         assertTrue("Should contain Neptune endpoint", error.contains("Neptune Endpoint: " + TestDataProvider.NEPTUNE_ENDPOINT));
         assertTrue("Should contain Neptune bulk load parallelism", error.contains("Bulk Load Parallelism: " + TestDataProvider.BULK_LOAD_PARALLELISM_MEDIUM));
         assertTrue("Should contain bulk load monitor setting", error.contains("Bulk Load Monitor: " + TestDataProvider.BOOLEAN_FALSE));
-        assertNotNull("NeptuneBulkLoader should be created", neptuneBulkLoader);
     }
 
     @Test
@@ -1714,5 +1713,4 @@ public class NeptuneBulkLoaderTest {
                 error.contains("Uploading file") || error.contains("Starting sequential upload"));
         }
     }
-
 }

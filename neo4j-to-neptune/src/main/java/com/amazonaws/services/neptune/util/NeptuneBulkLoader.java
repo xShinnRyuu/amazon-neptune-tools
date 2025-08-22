@@ -13,6 +13,7 @@ permissions and limitations under the License.
 package com.amazonaws.services.neptune.util;
 
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+
 import software.amazon.awssdk.core.async.AsyncRequestBody;
 import software.amazon.awssdk.core.async.AsyncRequestBodyFromInputStreamConfiguration;
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
