@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Neo4jStreamWriter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.io</a> &gt; <span class="el_source">Neo4jStreamWriter.java</span></div><h1>Neo4jStreamWriter.java</h1><pre class="source lang-java linenums">/*
+Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.io;
+
+import org.neo4j.driver.*;
+import org.neo4j.driver.Record;
+import org.neo4j.driver.exceptions.Neo4jException;
+
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
+import java.util.logging.Level;
+
+/**
+ * A writer class that streams data from Neo4j database to CSV files.
+ * This class handles the connection to Neo4j, executes export queries,
+ * and writes the results to temporary files for further processing.
+ */
+public class Neo4jStreamWriter implements AutoCloseable {
+
+<span class="fc" id="L35">    private static final Logger LOGGER = Logger.getLogger(Neo4jStreamWriter.class.getName());</span>
+    private static final String TEMP_FILE = &quot;neo4j-stream-data&quot;;
+    
+    private final Directories directories;
+    private final Driver driver;
+    private final Neo4jStreamWriterConfig config;
+
+    /**
+     * Creates a new Neo4jStreamWriter with default configuration.
+     *
+     * @param uri The Neo4j database URI
+     * @param username The database username
+     * @param password The database password
+     * @param directories The directories helper for file management
+     * @throws IllegalArgumentException if any parameter is null or invalid
+     */
+    public Neo4jStreamWriter(String uri, String username, String password, Directories directories) {
+<span class="nc" id="L52">        this(uri, username, password, directories, Neo4jStreamWriterConfig.defaultConfig());</span>
+<span class="nc" id="L53">    }</span>
+
+    /**
+     * Creates a new Neo4jStreamWriter with custom configuration.
+     *
+     * @param uri The Neo4j database URI
+     * @param username The database username
+     * @param password The database password
+     * @param directories The directories helper for file management
+     * @param config The configuration for the Neo4j driver
+     * @throws IllegalArgumentException if any parameter is null or invalid
+     */
+<span class="fc" id="L65">    public Neo4jStreamWriter(String uri, String username, String password, Directories directories, Neo4jStreamWriterConfig config) {</span>
+<span class="fc" id="L66">        validateInputs(uri, username, password, directories, config);</span>
+        
+<span class="fc" id="L68">        this.directories = directories;</span>
+<span class="fc" id="L69">        this.config = config;</span>
+        
+        try {
+<span class="fc" id="L72">            this.driver = GraphDatabase.driver(uri, AuthTokens.basic(username, password),</span>
+<span class="fc" id="L73">                Config.builder()</span>
+<span class="fc" id="L74">                    .withConnectionTimeout(config.getConnectionTimeoutSeconds(), TimeUnit.SECONDS)</span>
+<span class="fc" id="L75">                    .withMaxConnectionLifetime(config.getMaxConnectionLifetimeMinutes(), TimeUnit.MINUTES)</span>
+<span class="fc" id="L76">                    .build());</span>
+
+<span class="nc" id="L78">            driver.verifyConnectivity();</span>
+
+<span class="nc" id="L80">            LOGGER.info(&quot;Successfully connected to Neo4j database at: &quot; + uri);</span>
+<span class="fc" id="L81">        } catch (Exception e) {</span>
+<span class="fc" id="L82">            LOGGER.log(Level.SEVERE, &quot;Failed to connect to Neo4j database at: &quot; + uri, e);</span>
+<span class="fc" id="L83">            throw new RuntimeException(&quot;Failed to connect to Neo4j database&quot;, e);</span>
+<span class="nc" id="L84">        }</span>
+<span class="nc" id="L85">    }</span>
+
+    /**
+     * Issues a query to the database to stream all data back inside the &quot;data&quot; column in CSV format
+     * and writes it to a temporary file for conversion.
+     *
+     * @return The file containing the exported data, or null if the operation failed
+     */
+    public File streamToFile() {
+<span class="nc" id="L94">        return streamToFile(TEMP_FILE);</span>
+    }
+
+    /**
+     * Issues a query to the database to stream all data back inside the &quot;data&quot; column in CSV format
+     * and writes it to a temporary file for conversion.
+     *
+     * @param baseFileName The base name for the output file
+     * @return The file containing the exported data, or null if the operation failed
+     */
+    public File streamToFile(String baseFileName) {
+<span class="nc bnc" id="L105" title="All 4 branches missed.">        if (baseFileName == null || baseFileName.trim().isEmpty()) {</span>
+<span class="nc" id="L106">            throw new IllegalArgumentException(&quot;Base file name cannot be null or empty&quot;);</span>
+        }
+
+<span class="nc" id="L109">        Path tempFilePath = directories.createFilePath(baseFileName, &quot;temp&quot;);</span>
+<span class="nc" id="L110">        File file = tempFilePath.toFile();</span>
+        
+<span class="nc" id="L112">        LOGGER.info(&quot;Starting data export to file: &quot; + file.getAbsolutePath());</span>
+
+<span class="nc" id="L114">        try (BufferedWriter writer = Files.newBufferedWriter(tempFilePath, StandardCharsets.UTF_8);</span>
+<span class="nc" id="L115">             Session session = driver.session()) {</span>
+
+<span class="nc" id="L117">            String exportQuery = buildExportQuery();</span>
+<span class="nc" id="L118">            LOGGER.fine(&quot;Executing query: &quot; + exportQuery);</span>
+
+<span class="nc" id="L120">            Result result = session.run(exportQuery);</span>
+<span class="nc" id="L121">            long recordCount = 0;</span>
+<span class="nc" id="L122">            long lineCount = 0;</span>
+
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            while (result.hasNext()) {</span>
+<span class="nc" id="L125">                Record record = result.next();</span>
+<span class="nc" id="L126">                recordCount++;</span>
+                
+<span class="nc" id="L128">                Map&lt;String, Object&gt; recordMap = record.asMap();</span>
+<span class="nc" id="L129">                logRecordInfo(recordMap, recordCount);</span>
+                
+<span class="nc" id="L131">                Object dataObject = recordMap.get(&quot;data&quot;);</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                if (dataObject != null) {</span>
+<span class="nc" id="L133">                    lineCount += processDataObject(dataObject, writer);</span>
+                }
+<span class="nc" id="L135">            }</span>
+
+<span class="nc" id="L137">            LOGGER.info(String.format(&quot;Successfully exported %d records (%d lines) to file: %s&quot;, </span>
+<span class="nc" id="L138">                recordCount, lineCount, file.getAbsolutePath()));</span>
+<span class="nc" id="L139">            return file;</span>
+
+<span class="nc" id="L141">        } catch (Neo4jException e) {</span>
+<span class="nc" id="L142">            LOGGER.log(Level.SEVERE, &quot;Neo4j database error during export&quot;, e);</span>
+<span class="nc" id="L143">            return null;</span>
+<span class="nc" id="L144">        } catch (IOException e) {</span>
+<span class="nc" id="L145">            LOGGER.log(Level.SEVERE, &quot;IO error while writing to file: &quot; + file.getAbsolutePath(), e);</span>
+<span class="nc" id="L146">            return null;</span>
+<span class="nc" id="L147">        } catch (Exception e) {</span>
+<span class="nc" id="L148">            LOGGER.log(Level.SEVERE, &quot;Unexpected error during data export&quot;, e);</span>
+<span class="nc" id="L149">            return null;</span>
+        }
+    }
+
+    /**
+     * Executes a custom Cypher query and streams the results to a file.
+     *
+     * @param query The Cypher query to execute
+     * @param baseFileName The base name for the output file
+     * @return The file containing the exported data, or null if the operation failed
+     */
+    public File streamCustomQueryToFile(String query, String baseFileName) {
+<span class="nc bnc" id="L161" title="All 4 branches missed.">        if (query == null || query.trim().isEmpty()) {</span>
+<span class="nc" id="L162">            throw new IllegalArgumentException(&quot;Query cannot be null or empty&quot;);</span>
+        }
+<span class="nc bnc" id="L164" title="All 4 branches missed.">        if (baseFileName == null || baseFileName.trim().isEmpty()) {</span>
+<span class="nc" id="L165">            throw new IllegalArgumentException(&quot;Base file name cannot be null or empty&quot;);</span>
+        }
+
+<span class="nc" id="L168">        Path tempFilePath = directories.createFilePath(baseFileName, &quot;custom&quot;);</span>
+<span class="nc" id="L169">        File file = tempFilePath.toFile();</span>
+
+<span class="nc" id="L171">        LOGGER.info(&quot;Starting custom query export to file: &quot; + file.getAbsolutePath());</span>
+
+<span class="nc" id="L173">        try (BufferedWriter writer = Files.newBufferedWriter(tempFilePath, StandardCharsets.UTF_8);</span>
+<span class="nc" id="L174">             Session session = driver.session()) {</span>
+
+<span class="nc" id="L176">            LOGGER.fine(&quot;Executing custom query: &quot; + query);</span>
+
+<span class="nc" id="L178">            Result result = session.run(query);</span>
+<span class="nc" id="L179">            long recordCount = 0;</span>
+
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            while (result.hasNext()) {</span>
+<span class="nc" id="L182">                Record record = result.next();</span>
+<span class="nc" id="L183">                recordCount++;</span>
+
+                // Write the entire record as a line
+<span class="nc" id="L186">                writer.write(record.toString());</span>
+<span class="nc" id="L187">                writer.newLine();</span>
+<span class="nc" id="L188">            }</span>
+<span class="nc" id="L189">            writer.flush();</span>
+            
+<span class="nc" id="L191">            LOGGER.info(String.format(&quot;Successfully exported %d records from custom query to file: %s&quot;,</span>
+<span class="nc" id="L192">                recordCount, file.getAbsolutePath()));</span>
+<span class="nc" id="L193">            return file;</span>
+
+<span class="nc" id="L195">        } catch (Neo4jException e) {</span>
+<span class="nc" id="L196">            LOGGER.log(Level.SEVERE, &quot;Neo4j database error during custom query export&quot;, e);</span>
+<span class="nc" id="L197">            return null;</span>
+<span class="nc" id="L198">        } catch (IOException e) {</span>
+<span class="nc" id="L199">            LOGGER.log(Level.SEVERE, &quot;IO error while writing to file: &quot; + file.getAbsolutePath(), e);</span>
+<span class="nc" id="L200">            return null;</span>
+<span class="nc" id="L201">        } catch (Exception e) {</span>
+<span class="nc" id="L202">            LOGGER.log(Level.SEVERE, &quot;Unexpected error during custom query export&quot;, e);</span>
+<span class="nc" id="L203">            return null;</span>
+        }
+    }
+
+    @Override
+    public void close() {
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (driver != null) {</span>
+            try {
+<span class="nc" id="L211">                driver.close();</span>
+<span class="nc" id="L212">                LOGGER.info(&quot;Neo4j driver closed successfully&quot;);</span>
+<span class="nc" id="L213">            } catch (Exception e) {</span>
+<span class="nc" id="L214">                LOGGER.log(Level.WARNING, &quot;Error closing Neo4j driver&quot;, e);</span>
+<span class="nc" id="L215">            }</span>
+        }
+<span class="nc" id="L217">    }</span>
+
+    private void validateInputs(String uri, String username, String password, Directories directories, Neo4jStreamWriterConfig config) {
+<span class="fc bfc" id="L220" title="All 4 branches covered.">        if (uri == null || uri.trim().isEmpty()) {</span>
+<span class="fc" id="L221">            throw new IllegalArgumentException(&quot;URI cannot be null or empty&quot;);</span>
+        }
+<span class="fc bfc" id="L223" title="All 2 branches covered.">        if (username == null) {</span>
+<span class="fc" id="L224">            throw new IllegalArgumentException(&quot;Username cannot be null&quot;);</span>
+        }
+<span class="fc bfc" id="L226" title="All 2 branches covered.">        if (password == null) {</span>
+<span class="fc" id="L227">            throw new IllegalArgumentException(&quot;Password cannot be null&quot;);</span>
+        }
+<span class="fc bfc" id="L229" title="All 2 branches covered.">        if (directories == null) {</span>
+<span class="fc" id="L230">            throw new IllegalArgumentException(&quot;Directories cannot be null&quot;);</span>
+        }
+<span class="fc bfc" id="L232" title="All 2 branches covered.">        if (config == null) {</span>
+<span class="fc" id="L233">            throw new IllegalArgumentException(&quot;Config cannot be null&quot;);</span>
+        }
+<span class="fc" id="L235">    }</span>
+
+    private String buildExportQuery() {
+<span class="nc" id="L238">        StringBuilder queryBuilder = new StringBuilder();</span>
+<span class="nc" id="L239">        queryBuilder.append(&quot;CALL apoc.export.csv.all(null, {stream:true&quot;);</span>
+        
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        if (config.getBatchSize() &gt; 0) {</span>
+<span class="nc" id="L242">            queryBuilder.append(&quot;, batchSize:&quot;).append(config.getBatchSize());</span>
+        }
+        
+<span class="nc" id="L245">        queryBuilder.append(&quot;})\n&quot;)</span>
+<span class="nc" id="L246">                   .append(&quot;YIELD file, nodes, relationships, properties, data\n&quot;)</span>
+<span class="nc" id="L247">                   .append(&quot;RETURN file, nodes, relationships, properties, data&quot;);</span>
+        
+<span class="nc" id="L249">        return queryBuilder.toString();</span>
+    }
+
+    private void logRecordInfo(Map&lt;String, Object&gt; recordMap, long recordCount) {
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (LOGGER.isLoggable(Level.FINE)) {</span>
+<span class="nc" id="L254">            Object nodes = recordMap.get(&quot;nodes&quot;);</span>
+<span class="nc" id="L255">            Object relationships = recordMap.get(&quot;relationships&quot;);</span>
+<span class="nc" id="L256">            Object properties = recordMap.get(&quot;properties&quot;);</span>
+            
+<span class="nc" id="L258">            LOGGER.fine(String.format(&quot;Processing record %d - Nodes: %s, Relationships: %s, Properties: %s&quot;, </span>
+<span class="nc" id="L259">                recordCount, nodes, relationships, properties));</span>
+        }
+<span class="nc" id="L261">    }</span>
+
+    private long processDataObject(Object dataObject, BufferedWriter writer) throws IOException {
+<span class="nc" id="L264">        String dataString = dataObject.toString();</span>
+        
+        // Handle different line separator patterns
+<span class="nc" id="L267">        String[] lines = dataString.split(&quot;\\r?\\n|%n&quot;);</span>
+<span class="nc" id="L268">        long lineCount = 0;</span>
+        
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        for (String line : lines) {</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if (!line.trim().isEmpty()) {</span>
+<span class="nc" id="L272">                writer.write(line);</span>
+<span class="nc" id="L273">                writer.newLine();</span>
+<span class="nc" id="L274">                lineCount++;</span>
+            }
+        }
+<span class="nc" id="L277">        writer.flush();</span>
+        
+<span class="nc" id="L279">        return lineCount;</span>
+    }
+
+    /**
+     * Configuration class for Neo4jStreamWriter
+     */
+    public static class Neo4jStreamWriterConfig {
+        private final int connectionTimeoutSeconds;
+        private final int maxConnectionLifetimeMinutes;
+        private final int batchSize;
+
+<span class="fc" id="L290">        public Neo4jStreamWriterConfig(int connectionTimeoutSeconds, int maxConnectionLifetimeMinutes, int batchSize) {</span>
+<span class="fc" id="L291">            this.connectionTimeoutSeconds = connectionTimeoutSeconds;</span>
+<span class="fc" id="L292">            this.maxConnectionLifetimeMinutes = maxConnectionLifetimeMinutes;</span>
+<span class="fc" id="L293">            this.batchSize = batchSize;</span>
+<span class="fc" id="L294">        }</span>
+
+        public static Neo4jStreamWriterConfig defaultConfig() {
+<span class="fc" id="L297">            return new Neo4jStreamWriterConfig(30, 60, 1000);</span>
+        }
+
+        public int getConnectionTimeoutSeconds() {
+<span class="fc" id="L301">            return connectionTimeoutSeconds;</span>
+        }
+
+        public int getMaxConnectionLifetimeMinutes() {
+<span class="fc" id="L305">            return maxConnectionLifetimeMinutes;</span>
+        }
+
+        public int getBatchSize() {
+<span class="fc" id="L309">            return batchSize;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

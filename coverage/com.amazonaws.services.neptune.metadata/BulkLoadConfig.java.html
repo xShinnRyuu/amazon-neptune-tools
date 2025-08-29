@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BulkLoadConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.metadata</a> &gt; <span class="el_source">BulkLoadConfig.java</span></div><h1>BulkLoadConfig.java</h1><pre class="source lang-java linenums">/*
+Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.metadata;
+
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.yaml.snakeyaml.Yaml;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Configuration class for Neptune bulk load settings from YAML file.
+ * &lt;p&gt;
+ * Expected YAML format:
+ * bucket-name: &quot;my-s3-bucket&quot;
+ * s3-prefix: &quot;neptune&quot;
+ * neptune-endpoint: &quot;my-neptune-cluster.cluster-abc123.us-east-1.neptune.amazonaws.com&quot;
+ * iam-role-arn: &quot;arn:aws:iam::123456789012:role/NeptuneLoadFromS3&quot;
+ * parallelism: &quot;OVERSUBSCRIBE&quot;
+ * monitor: true
+ */
+@Data
+@NoArgsConstructor
+public class BulkLoadConfig {
+
+    private String bucketName;
+    private String s3Prefix;
+    private String neptuneEndpoint;
+    private String iamRoleArn;
+    private String parallelism;
+    private boolean monitor;
+    private static final String DEFAULT_S3_PREFIX = &quot;&quot;;
+    private static final String DEFAULT_PARALLELISM = &quot;OVERSUBSCRIBE&quot;;
+    private static final boolean DEFAULT_BOOLEAN_FALSE = false;
+
+    public static BulkLoadConfig fromFile(File configFile) throws IOException {
+<span class="fc" id="L51">        BulkLoadConfig config = new BulkLoadConfig();</span>
+
+<span class="pc bpc" id="L53" title="1 of 4 branches missed.">        if (configFile != null &amp;&amp; configFile.exists()) {</span>
+<span class="fc" id="L54">            Yaml yaml = new Yaml();</span>
+<span class="fc" id="L55">            try (FileInputStream inputStream = new FileInputStream(configFile)) {</span>
+<span class="fc" id="L56">                Map&lt;String, Object&gt; yamlData = yaml.load(inputStream);</span>
+<span class="fc" id="L57">                config.loadFromYaml(yamlData);</span>
+            }
+        }
+
+<span class="fc" id="L61">        return config;</span>
+    }
+
+    private void loadFromYaml(Map&lt;String, Object&gt; yamlData) {
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        if (yamlData != null) {</span>
+<span class="fc" id="L66">            this.bucketName = getStringValue(yamlData, &quot;bucket-name&quot;);</span>
+<span class="fc" id="L67">            this.s3Prefix = getStringValue(yamlData, &quot;s3-prefix&quot;, DEFAULT_S3_PREFIX);</span>
+<span class="fc" id="L68">            this.neptuneEndpoint = getStringValue(yamlData, &quot;neptune-endpoint&quot;);</span>
+<span class="fc" id="L69">            this.iamRoleArn = getStringValue(yamlData, &quot;iam-role-arn&quot;);</span>
+<span class="fc" id="L70">            this.parallelism = getStringValue(yamlData, &quot;parallelism&quot;, DEFAULT_PARALLELISM);</span>
+<span class="fc" id="L71">            this.monitor = getBooleanValue(yamlData, &quot;monitor&quot;, DEFAULT_BOOLEAN_FALSE);</span>
+        }
+<span class="fc" id="L73">    }</span>
+
+    private String getStringValue(Map&lt;String, Object&gt; yamlData, String key) {
+<span class="fc" id="L76">        return getStringValue(yamlData, key, null);</span>
+    }
+
+    private String getStringValue(Map&lt;String, Object&gt; yamlData, String key, String defaultValue) {
+<span class="fc" id="L80">        Object value = yamlData.get(key);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        return value != null ? value.toString() : defaultValue;</span>
+    }
+
+    private boolean getBooleanValue(Map&lt;String, Object&gt; yamlData, String key, boolean defaultValue) {
+<span class="fc" id="L85">        Object value = yamlData.get(key);</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (value == null) {</span>
+<span class="fc" id="L87">            return defaultValue;</span>
+<span class="pc bpc" id="L88" title="1 of 2 branches missed.">        } else if (value instanceof Boolean) {</span>
+<span class="fc" id="L89">            return (Boolean) value;</span>
+        } else {
+<span class="nc" id="L91">            throw new IllegalArgumentException(&quot;Expected boolean value for &quot; + key);</span>
+        }
+    }
+
+    public BulkLoadConfig withBucketName(String bucketName) {
+<span class="fc bfc" id="L96" title="All 4 branches covered.">        if (bucketName != null &amp;&amp; !bucketName.trim().isEmpty()) {</span>
+<span class="fc" id="L97">            this.bucketName = bucketName;</span>
+        }
+<span class="fc" id="L99">        return this;</span>
+    }
+
+    public BulkLoadConfig withNeptuneEndpoint(String neptuneEndpoint) {
+<span class="fc bfc" id="L103" title="All 4 branches covered.">        if (neptuneEndpoint != null &amp;&amp; !neptuneEndpoint.trim().isEmpty()) {</span>
+<span class="fc" id="L104">            this.neptuneEndpoint = neptuneEndpoint;</span>
+        }
+<span class="fc" id="L106">        return this;</span>
+    }
+
+    public BulkLoadConfig withIamRoleArn(String iamRoleArn) {
+<span class="fc bfc" id="L110" title="All 4 branches covered.">        if (iamRoleArn != null &amp;&amp; !iamRoleArn.trim().isEmpty()) {</span>
+<span class="fc" id="L111">            this.iamRoleArn = iamRoleArn;</span>
+        }
+<span class="fc" id="L113">        return this;</span>
+    }
+
+    /**
+     * Validates the bulk load configuration
+     * @param config The configuration to validate
+     * @throws IllegalArgumentException if the configuration is invalid
+     */
+    public static void validateBulkLoadConfigValues(BulkLoadConfig config) throws IllegalArgumentException {
+        // Collect missing required parameters
+<span class="fc" id="L123">        StringBuilder errorMsg = new StringBuilder();</span>
+
+        // Check required fields
+<span class="fc bfc" id="L126" title="All 2 branches covered.">        if (isNullOrEmpty(config.getNeptuneEndpoint())) {</span>
+<span class="fc" id="L127">            errorMsg.append(&quot;  - Neptune endpoint (--neptune-endpoint)\n&quot;);</span>
+        }
+
+<span class="fc bfc" id="L130" title="All 2 branches covered.">        if (isNullOrEmpty(config.getBucketName())) {</span>
+<span class="fc" id="L131">            errorMsg.append(&quot;  - S3 bucket name (--bucket-name)\n&quot;);</span>
+        }
+
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        if (isNullOrEmpty(config.getIamRoleArn())) {</span>
+<span class="fc" id="L135">            errorMsg.append(&quot;  - IAM role ARN (--iam-role-arn)\n&quot;);</span>
+        }
+
+        // If any required fields are missing, throw exception with all missing fields
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (errorMsg.length() &gt; 0) {</span>
+<span class="fc" id="L140">            throw new IllegalArgumentException(</span>
+                &quot;Error: Missing required bulk load parameters. &quot; +
+                &quot;Please ensure the following are provided either via CLI or config file:\n&quot; + errorMsg);
+        }
+
+<span class="fc" id="L145">        validateS3BucketName(config.getBucketName());</span>
+
+        // Validate parallelism if present
+<span class="fc" id="L148">        String parallelism = config.getParallelism();</span>
+<span class="fc bfc" id="L149" title="All 2 branches covered.">        if (!isNullOrEmpty(parallelism)) {</span>
+<span class="fc" id="L150">            Set&lt;String&gt; validParallelismOptions = Set.of(&quot;LOW&quot;, &quot;MEDIUM&quot;, &quot;HIGH&quot;, &quot;OVERSUBSCRIBE&quot;);</span>
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">            if (!validParallelismOptions.contains(parallelism.toUpperCase())) {</span>
+<span class="fc" id="L152">                throw new IllegalArgumentException(&quot;Parallelism must be one of: LOW, MEDIUM, HIGH, OVERSUBSCRIBE&quot;);</span>
+            }
+        }
+<span class="fc" id="L155">    }</span>
+
+    private static void validateS3BucketName(String bucketName) throws IllegalArgumentException {
+<span class="pc bpc" id="L158" title="2 of 4 branches missed.">        if (bucketName.length() &lt; 3 || bucketName.length() &gt; 63) {</span>
+<span class="nc" id="L159">            throw new IllegalArgumentException(&quot;S3 bucket name must be between 3 and 63 characters&quot;);</span>
+        }
+<span class="pc bpc" id="L161" title="1 of 2 branches missed.">        if (!bucketName.matches(&quot;^[a-z0-9.-]+$&quot;)) {</span>
+<span class="nc" id="L162">            throw new IllegalArgumentException(&quot;S3 bucket name must only contain lowercase letters, numbers, hyphens, and periods&quot;);</span>
+        }
+<span class="pc bpc" id="L164" title="2 of 4 branches missed.">        if (!Character.isLetterOrDigit(bucketName.charAt(0)) || !Character.isLetterOrDigit(bucketName.charAt(bucketName.length() - 1))) {</span>
+<span class="nc" id="L165">            throw new IllegalArgumentException(&quot;S3 bucket name must begin and end with a letter or number&quot;);</span>
+        }
+<span class="pc bpc" id="L167" title="1 of 2 branches missed.">        if (bucketName.contains(&quot;..&quot;)) {</span>
+<span class="nc" id="L168">            throw new IllegalArgumentException(&quot;S3 bucket name cannot contain consecutive periods&quot;);</span>
+        }
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">        if (bucketName.matches(&quot;^(\\d{1,3}\\.){3}\\d{1,3}$&quot;)) {</span>
+<span class="nc" id="L171">            throw new IllegalArgumentException(&quot;S3 bucket name cannot be formatted as an IP address&quot;);</span>
+        }
+<span class="pc bpc" id="L173" title="2 of 4 branches missed.">        if (bucketName.startsWith(&quot;xn--&quot;) || bucketName.startsWith(&quot;sthree-&quot;) ||</span>
+<span class="pc bpc" id="L174" title="2 of 4 branches missed.">                bucketName.startsWith(&quot;amzn-s3-demo-&quot;) || bucketName.endsWith(&quot;-s3alias&quot;) ||</span>
+<span class="pc bpc" id="L175" title="3 of 6 branches missed.">                bucketName.endsWith(&quot;--ol-s3&quot;) || bucketName.endsWith(&quot;.mrap&quot;) || bucketName.endsWith(&quot;--x-s3&quot;) ||</span>
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">                bucketName.endsWith(&quot;--table-s3&quot;)) {</span>
+<span class="nc" id="L177">            throw new IllegalArgumentException(&quot;S3 bucket name has an invalid prefix or suffix&quot;);</span>
+        }
+<span class="fc" id="L179">    }</span>
+
+    /**
+     * Helper method to check if a string is null or empty
+     * @param str The string to check
+     * @return true if the string is null or empty, false otherwise
+     */
+    private static boolean isNullOrEmpty(String str) {
+<span class="pc bpc" id="L187" title="1 of 4 branches missed.">        return str == null || str.trim().isEmpty();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

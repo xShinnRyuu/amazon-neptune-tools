@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VertexMetadata.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.metadata</a> &gt; <span class="el_source">VertexMetadata.java</span></div><h1>VertexMetadata.java</h1><pre class="source lang-java linenums">/*
+Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.metadata;
+
+import java.util.*;
+import org.apache.commons.csv.CSVRecord;
+import java.util.stream.Collectors;
+
+public class VertexMetadata {
+
+    private static final String VERTEX_ID_KEY = &quot;~id&quot;;
+
+    public static VertexMetadata parse(CSVRecord record, PropertyValueParser parser, ConversionConfig conversionConfig) {
+<span class="fc" id="L24">        Headers headers = new Headers();</span>
+<span class="fc" id="L25">        int lastColumnIndex = -1;</span>
+
+<span class="fc bfc" id="L27" title="All 2 branches covered.">        for (String header : record) {</span>
+<span class="fc bfc" id="L28" title="All 2 branches covered.">            if (header.equalsIgnoreCase(Token.NEO4J_START.value())) {</span>
+<span class="fc" id="L29">                break;</span>
+            } else {
+<span class="fc" id="L31">                lastColumnIndex++;</span>
+            }
+
+<span class="fc bfc" id="L34" title="All 3 branches covered.">            switch (header) {</span>
+                case &quot;_id&quot;:
+<span class="fc" id="L36">                    headers.add(Token.GREMLIN_ID);</span>
+<span class="fc" id="L37">                    break;</span>
+                case &quot;_labels&quot;:
+<span class="fc" id="L39">                    headers.add(Token.GREMLIN_LABEL);</span>
+<span class="fc" id="L40">                    break;</span>
+                default:
+<span class="fc" id="L42">                    headers.add(new Property(header));</span>
+            }
+<span class="fc" id="L44">        }</span>
+<span class="fc" id="L45">        return new VertexMetadata(headers, lastColumnIndex, parser, conversionConfig);</span>
+    }
+
+    private final Headers headers;
+    private final int lastColumnIndex;
+    private final PropertyValueParser propertyValueParser;
+    private final ConversionConfig conversionConfig;
+<span class="fc" id="L52">    private final Set&lt;String&gt; skippedVertexIds = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L53">    private final Map&lt;String, String&gt; vertexIdMap = new HashMap&lt;&gt;();</span>
+
+    // Cache for property name to index mapping
+<span class="fc" id="L56">    private final Map&lt;String, Integer&gt; propertyIndexMap = new HashMap&lt;&gt;();</span>
+
+<span class="fc" id="L58">    private VertexMetadata(Headers headers, int lastColumnIndex, PropertyValueParser parser, ConversionConfig conversionConfig) {</span>
+<span class="fc" id="L59">        this.headers = headers;</span>
+<span class="fc" id="L60">        this.lastColumnIndex = lastColumnIndex;</span>
+<span class="fc" id="L61">        this.propertyValueParser = parser;</span>
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">        this.conversionConfig = conversionConfig == null ? new ConversionConfig() : conversionConfig;</span>
+
+        // Pre-compute property name to index mapping for faster lookups
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        for (int i = 0; i &lt;= lastColumnIndex; i++) {</span>
+<span class="fc" id="L66">            Header header = headers.get(i);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">            if (header instanceof Property) {</span>
+<span class="fc" id="L68">                propertyIndexMap.put(((Property) header).getName(), i);</span>
+            }
+        }
+<span class="fc" id="L71">    }</span>
+
+    public List&lt;String&gt; headers() {
+<span class="fc" id="L74">        return headers.values();</span>
+    }
+
+    public int lastColumnIndex() {
+<span class="fc" id="L78">        return lastColumnIndex;</span>
+    }
+
+    public boolean isVertex(CSVRecord record) {
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        return !record.get(0).isEmpty();</span>
+    }
+
+    public Optional&lt;Iterable&lt;String&gt;&gt; toIterable(CSVRecord record) {
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">        if (shouldSkipVertex(record)) {</span>
+<span class="nc" id="L87">            return Optional.empty();</span>
+        }
+
+<span class="fc" id="L90">        return Optional.of(() -&gt; new Iterator&lt;String&gt;() {</span>
+<span class="fc" id="L91">            int index = 0;</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="fc bfc" id="L95" title="All 2 branches covered.">                return index &lt;= lastColumnIndex;</span>
+            }
+
+            @Override
+            public String next() {
+<span class="fc" id="L100">                Header header = headers.get(index);</span>
+
+<span class="fc bfc" id="L102" title="All 2 branches covered.">                if (header.equals(Token.GREMLIN_ID)) {</span>
+<span class="fc" id="L103">                    String originalId = record.get(index++);</span>
+<span class="fc" id="L104">                    String transformedId = mapVertexId(originalId, record);</span>
+
+                    // Store the mapping between original and transformed IDs
+<span class="fc" id="L107">                    vertexIdMap.put(originalId, transformedId);</span>
+
+<span class="fc" id="L109">                    return transformedId;</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">                } else if (header.equals(Token.GREMLIN_LABEL)) {</span>
+<span class="fc" id="L111">                    String originalLabels = record.get(index++);</span>
+<span class="fc" id="L112">                    return mapVertexLabels(originalLabels);</span>
+                } else {
+<span class="fc" id="L114">                    PropertyValue propertyValue = propertyValueParser.parse(record.get(index));</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">                    if (propertyValue.isMultiValued()) {</span>
+<span class="nc" id="L116">                        header.setIsMultiValued(true);</span>
+                    }
+<span class="fc" id="L118">                    header.updateDataType(propertyValue.dataType());</span>
+<span class="fc" id="L119">                    index++;</span>
+<span class="fc" id="L120">                    return propertyValue.value();</span>
+                }
+            }
+        });
+    }
+
+    private String mapVertexId(String originalId, CSVRecord record) {
+<span class="pc bpc" id="L127" title="1 of 4 branches missed.">        if (originalId == null || originalId.trim().isEmpty()) {</span>
+<span class="fc" id="L128">            return originalId;</span>
+        }
+
+        // Check if there's a template for vertex ID transformation
+<span class="fc" id="L132">        String template = conversionConfig.getVertexIdTransformation().get(VERTEX_ID_KEY);</span>
+<span class="fc bfc" id="L133" title="All 2 branches covered.">        if (template == null) {</span>
+<span class="fc" id="L134">            return originalId;</span>
+        }
+
+        // Quick check if template has any placeholders
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        if (!template.contains(&quot;{&quot;)) {</span>
+<span class="fc" id="L139">            return template;</span>
+        }
+
+        // Start with the template and replace {_id}
+<span class="fc" id="L143">        String result = template.replace(Token.valueWithCurlyBraces(Token.NEO4J_ID), originalId);</span>
+
+        // Support for {~id} placeholder (Gremlin format)
+<span class="pc bpc" id="L146" title="1 of 2 branches missed.">        if (result.contains(Token.valueWithCurlyBraces(Token.GREMLIN_ID))) {</span>
+<span class="nc" id="L147">            result = result.replace(Token.valueWithCurlyBraces(Token.GREMLIN_ID), originalId);</span>
+        }
+
+        // Replace {_labels} if present
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        if (result.contains(Token.valueWithCurlyBraces(Token.NEO4J_LABELS))) {</span>
+<span class="fc" id="L152">            String rawLabels = record.get(1);</span>
+<span class="fc" id="L153">            String mappedLabels = mapVertexLabels(rawLabels).replace(&quot;;&quot;, &quot;_&quot;);</span>
+<span class="fc" id="L154">            result = result.replace(Token.valueWithCurlyBraces(Token.NEO4J_LABELS), mappedLabels);</span>
+        }
+
+        // Support for {~label} placeholder (Gremlin format)
+<span class="pc bpc" id="L158" title="1 of 2 branches missed.">        if (result.contains(Token.valueWithCurlyBraces(Token.GREMLIN_LABEL))) {</span>
+<span class="nc" id="L159">            String rawLabels = record.get(1);</span>
+<span class="nc" id="L160">            String mappedLabels = mapVertexLabels(rawLabels).replace(&quot;;&quot;, &quot;_&quot;);</span>
+<span class="nc" id="L161">            result = result.replace(Token.valueWithCurlyBraces(Token.GREMLIN_LABEL), mappedLabels);</span>
+        }
+
+        // Replace property placeholders using the cached property index map
+<span class="fc bfc" id="L165" title="All 2 branches covered.">        for (Map.Entry&lt;String, Integer&gt; entry : propertyIndexMap.entrySet()) {</span>
+<span class="fc" id="L166">            String propName = entry.getKey();</span>
+<span class="fc" id="L167">            String placeholder = &quot;{&quot; + propName + &quot;}&quot;;</span>
+
+<span class="fc bfc" id="L169" title="All 2 branches covered.">            if (result.contains(placeholder)) {</span>
+<span class="fc" id="L170">                int index = entry.getValue();</span>
+<span class="pc bpc" id="L171" title="1 of 2 branches missed.">                if (index &lt; record.size()) {</span>
+<span class="fc" id="L172">                    result = result.replace(placeholder, record.get(index));</span>
+                }
+            }
+<span class="fc" id="L175">        }</span>
+
+        // Check if any placeholders remain
+<span class="fc" id="L178">        int placeholderStart = result.indexOf('{');</span>
+<span class="fc bfc" id="L179" title="All 2 branches covered.">        if (placeholderStart &gt;= 0) {</span>
+<span class="fc" id="L180">            int placeholderEnd = result.indexOf('}', placeholderStart);</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">            if (placeholderEnd &gt; placeholderStart) {</span>
+<span class="fc" id="L182">                String placeholder = result.substring(placeholderStart + 1, placeholderEnd);</span>
+<span class="fc" id="L183">                throw new IllegalArgumentException(&quot;Property {&quot; + placeholder + &quot;} not found in CSV headers&quot;);</span>
+            }
+        }
+
+<span class="fc" id="L187">        return result;</span>
+    }
+
+    String mapVertexLabels(String originalLabels) {
+<span class="fc bfc" id="L191" title="All 4 branches covered.">        if (originalLabels == null || originalLabels.trim().isEmpty()) {</span>
+<span class="fc" id="L192">            return originalLabels;</span>
+        }
+
+<span class="fc" id="L195">        return Arrays.stream(originalLabels.split(&quot;:&quot;))</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">                .filter(s -&gt; !s.isEmpty())</span>
+<span class="fc" id="L197">                .map(label -&gt; conversionConfig.getVertexLabels().getOrDefault(label.trim(), label.trim()))</span>
+<span class="fc" id="L198">                .collect(Collectors.joining(&quot;;&quot;));</span>
+    }
+
+    boolean shouldSkipVertex(CSVRecord record) {
+        // Quick check if no skip rules
+<span class="fc bfc" id="L203" title="All 2 branches covered.">        if (!conversionConfig.hasSkipRules()) {</span>
+<span class="fc" id="L204">            return false;</span>
+        }
+
+<span class="fc" id="L207">        String vertexId = record.get(0); // _id is always the first column</span>
+<span class="fc" id="L208">        Set&lt;String&gt; skipVertexIds = conversionConfig.getSkipVertices().getById();</span>
+
+        // Check if vertex ID should be skipped
+<span class="fc bfc" id="L211" title="All 4 branches covered.">        if (!skipVertexIds.isEmpty() &amp;&amp; skipVertexIds.contains(vertexId)) {</span>
+<span class="fc" id="L212">            skippedVertexIds.add(vertexId);</span>
+<span class="fc" id="L213">            return true;</span>
+        }
+
+        // Check if vertex should be skipped by label
+<span class="fc" id="L217">        Set&lt;String&gt; skipVertexLabels = conversionConfig.getSkipVertices().getByLabel();</span>
+<span class="fc bfc" id="L218" title="All 4 branches covered.">        if (!skipVertexLabels.isEmpty() &amp;&amp; record.size() &gt; 1) {</span>
+<span class="fc" id="L219">            String vertexLabels = record.get(1);</span>
+<span class="pc bpc" id="L220" title="1 of 4 branches missed.">            if (vertexLabels != null &amp;&amp; !vertexLabels.isEmpty()) {</span>
+<span class="fc bfc" id="L221" title="All 2 branches covered.">                for (String label : vertexLabels.split(&quot;:&quot;)) {</span>
+<span class="fc" id="L222">                    String trimmedLabel = label.trim();</span>
+<span class="pc bpc" id="L223" title="1 of 4 branches missed.">                    if (!trimmedLabel.isEmpty() &amp;&amp; skipVertexLabels.contains(trimmedLabel)) {</span>
+<span class="fc" id="L224">                        skippedVertexIds.add(vertexId);</span>
+<span class="fc" id="L225">                        return true;</span>
+                    }
+                }
+            }
+        }
+
+<span class="fc" id="L231">        return false;</span>
+    }
+
+    /**
+     * Get the set of skipped vertex IDs for edge filtering
+     */
+    public Set&lt;String&gt; getSkippedVertexIds() {
+<span class="fc" id="L238">        return Collections.unmodifiableSet(skippedVertexIds);</span>
+    }
+
+    /**
+     * Get the mapping between original and transformed vertex IDs
+     */
+    public Map&lt;String, String&gt; getVertexIdMap() {
+<span class="fc" id="L245">        return Collections.unmodifiableMap(vertexIdMap);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

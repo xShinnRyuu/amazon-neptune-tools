@@ -1,0 +1,591 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>NeptuneBulkLoader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.util</a> &gt; <span class="el_source">NeptuneBulkLoader.java</span></div><h1>NeptuneBulkLoader.java</h1><pre class="source lang-java linenums">/*
+Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.util;
+
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.core.async.AsyncRequestBody;
+import software.amazon.awssdk.core.async.AsyncRequestBodyFromInputStreamConfiguration;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.transfer.s3.S3TransferManager;
+import software.amazon.awssdk.transfer.s3.model.UploadRequest;
+import software.amazon.awssdk.transfer.s3.model.Upload;
+
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
+import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.zip.GZIPOutputStream;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.amazonaws.services.neptune.metadata.BulkLoadConfig;
+import com.fasterxml.jackson.databind.JsonNode;
+
+/**
+ * Utility class for uploading local CSV files to Amazon S3 and loading them into Neptune
+ * Designed for Neptune data loading workflows with bulk loading capability
+ */
+public class NeptuneBulkLoader implements AutoCloseable {
+    private static final Set&lt;String&gt; BULK_LOAD_STATUS_CODES_COMPLETED;
+    private static final Set&lt;String&gt; BULK_LOAD_STATUS_CODES_FAILURES;
+    private static final int MAX_RETRIES = 3;
+    private static final int INITIAL_BACKOFF_MS = 1000;
+    private static final int CONNECTION_TIMEOUT_SECONDS = 30;
+    private static final int REQUEST_TIMEOUT_SECONDS = 120;
+    private static final int MONITOR_SLEEP_TIME_MS = 1000;
+    private static final int MONITOR_MAX_ATTEMPTS = 300;
+
+    static {
+<span class="fc" id="L67">        Set&lt;String&gt; completed = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L68">        completed.add(&quot;LOAD_COMPLETED&quot;);</span>
+<span class="fc" id="L69">        completed.add(&quot;LOAD_COMMITTED_W_WRITE_CONFLICTS&quot;);</span>
+<span class="fc" id="L70">        BULK_LOAD_STATUS_CODES_COMPLETED = Collections.unmodifiableSet(completed);</span>
+
+<span class="fc" id="L72">        Set&lt;String&gt; failures = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L73">        failures.add(&quot;LOAD_CANCELLED_BY_USER&quot;);</span>
+<span class="fc" id="L74">        failures.add(&quot;LOAD_CANCELLED_DUE_TO_ERRORS&quot;);</span>
+<span class="fc" id="L75">        failures.add(&quot;LOAD_UNEXPECTED_ERROR&quot;);</span>
+<span class="fc" id="L76">        failures.add(&quot;LOAD_FAILED&quot;);</span>
+<span class="fc" id="L77">        failures.add(&quot;LOAD_S3_READ_ERROR&quot;);</span>
+<span class="fc" id="L78">        failures.add(&quot;LOAD_S3_ACCESS_DENIED_ERROR&quot;);</span>
+<span class="fc" id="L79">        failures.add(&quot;LOAD_DATA_DEADLOCK&quot;);</span>
+<span class="fc" id="L80">        failures.add(&quot;LOAD_DATA_FAILED_DUE_TO_FEED_MODIFIED_OR_DELETED&quot;);</span>
+<span class="fc" id="L81">        failures.add(&quot;LOAD_FAILED_BECAUSE_DEPENDENCY_NOT_SATISFIED&quot;);</span>
+<span class="fc" id="L82">        failures.add(&quot;LOAD_FAILED_INVALID_REQUEST&quot;);</span>
+<span class="fc" id="L83">        failures.add(&quot;LOAD_CANCELLED&quot;);</span>
+<span class="fc" id="L84">        BULK_LOAD_STATUS_CODES_FAILURES = Collections.unmodifiableSet(failures);</span>
+<span class="fc" id="L85">    }</span>
+
+    private static final String NEPTUNE_PORT = &quot;8182&quot;; // Default Neptune port for HTTP API
+    private final S3TransferManager transferManager;
+    private final String bucketName;
+    private final String s3Prefix;
+    private final Region region;
+    private final String neptuneEndpoint;
+    private final String iamRoleArn;
+    private final String parallelism;
+    private final Boolean monitor;
+    private final HttpClient httpClient;
+    private final ObjectMapper objectMapper;
+
+<span class="fc" id="L99">    public NeptuneBulkLoader(BulkLoadConfig bulkLoadConfig) {</span>
+<span class="fc" id="L100">        this.bucketName = bulkLoadConfig.getBucketName().replaceAll(&quot;/+$&quot;, &quot;&quot;);</span>
+<span class="fc" id="L101">        this.s3Prefix = bulkLoadConfig.getS3Prefix().replaceAll(&quot;/+$&quot;, &quot;&quot;);</span>
+<span class="fc" id="L102">        this.neptuneEndpoint = bulkLoadConfig.getNeptuneEndpoint();</span>
+<span class="fc" id="L103">        this.region = extractRegionFromEndpoint(this.neptuneEndpoint);</span>
+<span class="fc" id="L104">        this.iamRoleArn = bulkLoadConfig.getIamRoleArn();</span>
+<span class="fc" id="L105">        this.parallelism = bulkLoadConfig.getParallelism().toUpperCase();</span>
+<span class="fc" id="L106">        this.monitor = bulkLoadConfig.isMonitor();</span>
+
+        // Initialize clients
+<span class="fc" id="L109">        this.objectMapper = new ObjectMapper();</span>
+
+        // Create S3AsyncClient with optimized configuration for large file uploads
+<span class="fc" id="L112">        S3AsyncClient s3AsyncClient = S3AsyncClient.builder()</span>
+<span class="fc" id="L113">                .region(region)</span>
+<span class="fc" id="L114">                .credentialsProvider(DefaultCredentialsProvider.create())</span>
+<span class="fc" id="L115">                .multipartEnabled(true)</span>
+<span class="fc" id="L116">                .httpClientBuilder(NettyNioAsyncHttpClient.builder()</span>
+<span class="fc" id="L117">                    .maxConcurrency(300)</span>
+<span class="fc" id="L118">                    .maxPendingConnectionAcquires(5000)</span>
+<span class="fc" id="L119">                    .connectionAcquisitionTimeout(Duration.ofHours(3))</span>
+<span class="fc" id="L120">                    .connectionTimeout(Duration.ofMinutes(5))</span>
+<span class="fc" id="L121">                    .readTimeout(Duration.ofMinutes(15))</span>
+<span class="fc" id="L122">                    .writeTimeout(Duration.ofMinutes(15))</span>
+                )
+<span class="fc" id="L124">                .overrideConfiguration(ClientOverrideConfiguration.builder()</span>
+<span class="fc" id="L125">                    .apiCallTimeout(Duration.ofMinutes(30)) // 30 minute API call timeout</span>
+<span class="fc" id="L126">                    .apiCallAttemptTimeout(Duration.ofMinutes(15)) // 15 minute per attempt</span>
+<span class="fc" id="L127">                    .build())</span>
+<span class="fc" id="L128">                .build();</span>
+
+        // Initialize S3 Transfer Manager with the configured S3 client
+<span class="fc" id="L131">        this.transferManager = S3TransferManager.builder()</span>
+<span class="fc" id="L132">                .s3Client(s3AsyncClient)</span>
+<span class="fc" id="L133">                .build();</span>
+
+<span class="fc" id="L135">        this.httpClient = HttpClient.newBuilder()</span>
+<span class="fc" id="L136">                .connectTimeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))</span>
+<span class="fc" id="L137">                .build();</span>
+
+        // Log configuration
+<span class="fc" id="L140">        logConfiguration();</span>
+<span class="fc" id="L141">    }</span>
+
+    /**
+     * Extracts the AWS region from the Neptune endpoint
+     * @param endpoint The Neptune endpoint
+     * @return The AWS region
+     * @throws IllegalArgumentException if the endpoint format is invalid
+     */
+    private Region extractRegionFromEndpoint(String endpoint) {
+        // Example endpoint: my-neptune-cluster.cluster[-custom]-abc123.&lt;region&gt;.neptune.amazonaws.com
+<span class="fc" id="L151">        String[] endpointParts = endpoint.split(&quot;\\.&quot;);</span>
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">        if (endpointParts.length &lt; 4) {</span>
+<span class="nc" id="L153">            throw new IllegalArgumentException(&quot;Invalid Neptune endpoint format: &quot; + endpoint);</span>
+        }
+<span class="fc" id="L155">        return Region.of(endpointParts[2]);</span>
+    }
+
+    /**
+     * Logs the configuration for debugging purposes
+     */
+    private void logConfiguration() {
+<span class="fc" id="L162">        System.err.println(&quot;S3 Bucket: &quot; + this.bucketName);</span>
+<span class="fc" id="L163">        System.err.println(&quot;S3 Prefix: &quot; + this.s3Prefix);</span>
+<span class="fc" id="L164">        System.err.println(&quot;AWS Region: &quot; + this.region);</span>
+<span class="fc" id="L165">        System.err.println(&quot;IAM Role ARN: &quot; + this.iamRoleArn);</span>
+<span class="fc" id="L166">        System.err.println(&quot;Neptune Endpoint: &quot; + this.neptuneEndpoint);</span>
+<span class="fc" id="L167">        System.err.println(&quot;Bulk Load Parallelism: &quot; + this.parallelism);</span>
+<span class="fc" id="L168">        System.err.println(&quot;Bulk Load Monitor: &quot; + this.monitor);</span>
+<span class="fc" id="L169">        System.err.println();</span>
+<span class="fc" id="L170">    }</span>
+
+    // Constructor for testing
+<span class="fc" id="L173">    public NeptuneBulkLoader(BulkLoadConfig bulkLoadConfig, HttpClient httpClient, S3TransferManager transferManager) {</span>
+<span class="fc" id="L174">        this.bucketName = bulkLoadConfig.getBucketName().replaceAll(&quot;/+$&quot;, &quot;&quot;);</span>
+<span class="fc" id="L175">        this.s3Prefix = bulkLoadConfig.getS3Prefix().replaceAll(&quot;/+$&quot;, &quot;&quot;);</span>
+<span class="fc" id="L176">        this.neptuneEndpoint = bulkLoadConfig.getNeptuneEndpoint();</span>
+<span class="fc" id="L177">        this.region = Region.of(neptuneEndpoint.split(&quot;\\.&quot;)[2]);</span>
+<span class="fc" id="L178">        this.iamRoleArn = bulkLoadConfig.getIamRoleArn();</span>
+<span class="fc" id="L179">        this.parallelism = bulkLoadConfig.getParallelism();</span>
+<span class="fc" id="L180">        this.monitor = bulkLoadConfig.isMonitor();</span>
+<span class="fc" id="L181">        this.objectMapper = new ObjectMapper();</span>
+<span class="fc" id="L182">        this.transferManager = transferManager;</span>
+<span class="fc" id="L183">        this.httpClient = httpClient;</span>
+<span class="fc" id="L184">    }</span>
+
+    /**
+     * Upload Neptune vertices and edges CSV files asynchronously
+     */
+    public String uploadCsvFilesToS3(String filePath) throws Exception {
+<span class="fc" id="L190">        System.err.println(&quot;Uploading Gremlin load data to S3...&quot;);</span>
+
+        // Grab the timestamp of ConvertCsv to use as S3 directory prefix
+<span class="fc" id="L193">        String convertCsvTimeStamp = filePath.substring(filePath.lastIndexOf('/') + 1);</span>
+
+        // Check if the S3 prefix is provided, and construct the full S3 prefix using convertCsvTimeStamp
+<span class="fc" id="L196">        String s3PrefixWithTimeStamp = Optional.ofNullable(s3Prefix)</span>
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">            .filter(prefix  -&gt; !prefix.isEmpty())</span>
+<span class="fc" id="L198">            .map(prefix  -&gt; prefix + &quot;/&quot;)</span>
+<span class="fc" id="L199">            .orElse(&quot;&quot;) + convertCsvTimeStamp;</span>
+
+        // Upload all files from the directory
+        try {
+<span class="fc" id="L203">            uploadFilesInDirectory(filePath, s3PrefixWithTimeStamp);</span>
+<span class="fc" id="L204">        } catch (Exception e) {</span>
+<span class="fc" id="L205">            System.err.println(&quot;CSV file uploads failed from directory: &quot; + filePath);</span>
+<span class="fc" id="L206">            throw new RuntimeException(&quot;One or more CSV uploads failed.&quot;, e);</span>
+<span class="fc" id="L207">        }</span>
+
+<span class="fc" id="L209">        String uploadS3Uri = &quot;s3://&quot; + bucketName + &quot;/&quot; + s3PrefixWithTimeStamp+ &quot;/&quot;;</span>
+<span class="fc" id="L210">        System.err.println(&quot;Files uploaded successfully to S3. Files available at: &quot; + uploadS3Uri);</span>
+<span class="fc" id="L211">        return uploadS3Uri;</span>
+    }
+
+    /**
+     * Upload all files from a directory to S3 sequentially to avoid connection pool exhaustion
+     */
+    protected void uploadFilesInDirectory(String directoryPath, String s3Prefix) throws Exception {
+        // Create a File object to check existence
+<span class="fc" id="L219">        File directory = new File(directoryPath);</span>
+
+<span class="pc bpc" id="L221" title="1 of 4 branches missed.">        if (!directory.exists() || !directory.isDirectory()) {</span>
+<span class="fc" id="L222">            throw new IllegalStateException(&quot;Directory does not exist: &quot; + directoryPath);</span>
+        }
+
+<span class="fc" id="L225">        System.err.println(&quot;Starting sequential upload of files from &quot; +</span>
+            directoryPath + &quot; to s3://&quot; + bucketName + &quot;/&quot; + s3Prefix);
+
+        // Get all files in the directory with the specified extension
+<span class="fc" id="L229">        File[] csvFiles = directory.listFiles((dir, name) -&gt; name.toLowerCase().endsWith(&quot;.csv&quot;));</span>
+
+<span class="pc bpc" id="L231" title="1 of 4 branches missed.">        if (csvFiles == null || csvFiles.length == 0) {</span>
+<span class="fc" id="L232">            System.err.println(&quot;No files with correct extension were found in &quot; + directoryPath);</span>
+<span class="fc" id="L233">            throw new RuntimeException(&quot;No CSV files found in directory: &quot; + directoryPath);</span>
+        }
+
+        // Upload files sequentially to avoid connection pool exhaustion
+<span class="fc" id="L237">        uploadFilesSequentially(csvFiles, s3Prefix);</span>
+<span class="fc" id="L238">        System.err.println(&quot;Successfully uploaded all &quot; + csvFiles.length + &quot; files from &quot; + directoryPath);</span>
+<span class="fc" id="L239">    }</span>
+
+    /**
+     * Upload files sequentially (one at a time) to avoid overwhelming the connection pool
+     */
+    private void uploadFilesSequentially(File[] files, String s3Prefix) {
+<span class="fc bfc" id="L245" title="All 2 branches covered.">        for (int index = 0; index &lt; files.length; index++) {</span>
+<span class="fc" id="L246">            File currentFile = files[index];</span>
+<span class="fc" id="L247">            String csvFilePath = s3Prefix + &quot;/&quot; + currentFile.getName();</span>
+
+<span class="fc" id="L249">            System.err.println(&quot;Uploading file &quot; + (index + 1) + &quot; of &quot; + files.length + &quot;: &quot; + currentFile.getName());</span>
+
+            try {
+                // Wait for upload to complete
+<span class="fc" id="L253">                boolean success = uploadFileWithInflightCompression(currentFile.getAbsolutePath(), csvFilePath).get();</span>
+
+<span class="fc bfc" id="L255" title="All 2 branches covered.">                if (!success) {</span>
+<span class="fc" id="L256">                    System.err.println(&quot;Failed to upload &quot; + currentFile.getName() + &quot;, stopping sequential upload&quot;);</span>
+<span class="fc" id="L257">                    throw new RuntimeException(&quot;Upload failed for file: &quot; + currentFile.getName());</span>
+                }
+
+<span class="fc" id="L260">                System.err.println(&quot;Successfully uploaded &quot; + currentFile.getName() +</span>
+                    &quot; (&quot; + (index + 1) + &quot;/&quot; + files.length + &quot;)&quot;);
+
+<span class="fc" id="L263">            } catch (Exception e) {</span>
+<span class="fc" id="L264">                logUploadError(currentFile.getAbsolutePath(), e);</span>
+<span class="fc" id="L265">                throw new RuntimeException(&quot;Exception during upload for file: &quot; + currentFile.getName(), e);</span>
+<span class="fc" id="L266">            }</span>
+        }
+
+<span class="fc" id="L269">        System.err.println(&quot;Successfully uploaded all &quot; + files.length + &quot; files sequentially&quot;);</span>
+<span class="fc" id="L270">    }</span>
+
+    /**
+     * Upload a single CSV file to S3 using S3TransferManager with in-flight compression
+     */
+    protected CompletableFuture&lt;Boolean&gt; uploadFileWithInflightCompression(String localFilePath, String s3Prefix) throws Exception {
+<span class="fc" id="L276">        File localFile = new File(localFilePath);</span>
+<span class="fc bfc" id="L277" title="All 4 branches covered.">        if (!localFile.exists() || !localFile.isFile()) {</span>
+<span class="fc" id="L278">            throw new IllegalStateException(&quot;File does not exist: &quot; + localFilePath);</span>
+        }
+
+<span class="fc" id="L281">        String s3Key = s3Prefix + &quot;.gz&quot;;</span>
+<span class="fc" id="L282">        String s3SourceUri = &quot;s3://&quot; + bucketName + &quot;/&quot; + s3Key;</span>
+<span class="fc" id="L283">        System.err.println(&quot;Starting upload with compression of &quot; + localFilePath + &quot; to &quot; + s3SourceUri);</span>
+<span class="fc" id="L284">        System.err.println(&quot;File size: &quot; + Utils.formatFileSize(localFile.length()));</span>
+
+<span class="fc" id="L286">        ExecutorService streamExecutor = Executors.newSingleThreadExecutor();</span>
+<span class="fc" id="L287">        PipedOutputStream pipedOut = new PipedOutputStream();</span>
+<span class="fc" id="L288">        PipedInputStream pipedIn = new PipedInputStream(pipedOut);</span>
+
+        try {
+<span class="fc" id="L291">            CompletableFuture&lt;Void&gt; compressionFuture = startCompressionTask(localFile, pipedOut);</span>
+<span class="fc" id="L292">            UploadRequest uploadRequest = createUploadRequest(s3Key, pipedIn, streamExecutor);</span>
+
+<span class="fc" id="L294">            System.err.println(&quot;Initiating Transfer Manager upload...&quot;);</span>
+<span class="fc" id="L295">            Upload upload = transferManager.upload(uploadRequest);</span>
+
+            // Wait for BOTH upload and compression to complete - fail if either fails
+<span class="fc" id="L298">            return CompletableFuture.allOf(upload.completionFuture(), compressionFuture)</span>
+<span class="fc" id="L299">                .thenApply(ignored -&gt; {</span>
+<span class="fc" id="L300">                    System.err.println(</span>
+<span class="fc" id="L301">                        &quot;Successfully uploaded &quot; + localFile.getName() +</span>
+<span class="fc" id="L302">                        &quot; (compressed) - ETag: &quot; + upload.completionFuture().join().response().eTag());</span>
+<span class="fc" id="L303">                    return true;</span>
+                })
+<span class="fc" id="L305">                .exceptionally(throwable -&gt; {</span>
+<span class="fc" id="L306">                    logUploadError(localFilePath, throwable);</span>
+                    // Re-throw to maintain fail-fast behavior
+<span class="pc bpc" id="L308" title="1 of 2 branches missed.">                    if (throwable instanceof RuntimeException) {</span>
+<span class="fc" id="L309">                        throw (RuntimeException) throwable;</span>
+                    } else {
+<span class="nc" id="L311">                        throw new RuntimeException(&quot;Upload or compression failed&quot;, throwable);</span>
+                    }
+                })
+<span class="fc" id="L314">                .whenComplete((result, throwable) -&gt; {</span>
+<span class="fc" id="L315">                    closeStreams(streamExecutor, pipedOut, pipedIn);</span>
+<span class="fc" id="L316">                });</span>
+
+<span class="nc" id="L318">        } catch (Exception e) {</span>
+            // Cleanup for setup failures
+<span class="nc" id="L320">            closeStreams(streamExecutor, pipedOut, pipedIn);</span>
+<span class="nc" id="L321">            throw e;</span>
+        }
+    }
+
+    /**
+     * Start the compression task in a background thread
+     */
+    protected CompletableFuture&lt;Void&gt; startCompressionTask(File localFile, PipedOutputStream pipedOut) {
+<span class="fc" id="L329">        return CompletableFuture.runAsync(() -&gt; {</span>
+<span class="fc" id="L330">            try (GZIPOutputStream gzipOut = new GZIPOutputStream(pipedOut);</span>
+<span class="fc" id="L331">                 FileInputStream fis = new FileInputStream(localFile);</span>
+<span class="fc" id="L332">                 BufferedInputStream fileIn = new BufferedInputStream(fis)) {</span>
+
+<span class="fc" id="L334">                fileIn.transferTo(gzipOut);</span>
+<span class="fc" id="L335">                gzipOut.finish();</span>
+
+<span class="nc" id="L337">            } catch (IOException e) {</span>
+<span class="nc" id="L338">                throw new UncheckedIOException(&quot;Compression failed for &quot; + localFile.getAbsolutePath(), e);</span>
+<span class="fc" id="L339">            }</span>
+<span class="fc" id="L340">        });</span>
+    }
+
+    /**
+     * Create the S3 upload request with compressed stream
+     */
+    private UploadRequest createUploadRequest(String s3Key, PipedInputStream pipedIn, ExecutorService streamExecutor) {
+<span class="fc" id="L347">        return UploadRequest.builder()</span>
+<span class="fc" id="L348">            .putObjectRequest(putBuilder -&gt; putBuilder</span>
+<span class="fc" id="L349">                .bucket(bucketName)</span>
+<span class="fc" id="L350">                .key(s3Key)</span>
+<span class="fc" id="L351">                .contentType(&quot;application/gzip&quot;)</span>
+<span class="fc" id="L352">                .build())</span>
+<span class="fc" id="L353">            .requestBody(AsyncRequestBody.fromInputStream(</span>
+<span class="fc" id="L354">                AsyncRequestBodyFromInputStreamConfiguration.builder()</span>
+<span class="fc" id="L355">                    .inputStream(pipedIn)</span>
+<span class="fc" id="L356">                    .executor(streamExecutor)</span>
+<span class="fc" id="L357">                    .build()</span>
+            ))
+<span class="fc" id="L359">            .build();</span>
+    }
+
+    /**
+     * Log upload error details
+     */
+    private void logUploadError(String localFilePath, Throwable throwable) {
+<span class="fc" id="L366">        System.err.println(&quot;Transfer Manager upload failed for &quot; + localFilePath);</span>
+<span class="fc" id="L367">        System.err.println(&quot;Error type: &quot; + throwable.getClass().getSimpleName());</span>
+<span class="fc" id="L368">        System.err.println(&quot;Error message: &quot; + throwable.getMessage());</span>
+
+<span class="pc bpc" id="L370" title="1 of 2 branches missed.">        if (throwable.getCause() instanceof S3Exception) {</span>
+<span class="nc" id="L371">            S3Exception s3Exception = (S3Exception) throwable.getCause();</span>
+<span class="nc" id="L372">            System.err.println(&quot;S3 error code: &quot; + s3Exception.awsErrorDetails().errorCode());</span>
+<span class="nc" id="L373">            System.err.println(&quot;S3 error message: &quot; + s3Exception.awsErrorDetails().errorMessage());</span>
+<span class="nc" id="L374">            System.err.println(&quot;S3 status code: &quot; + s3Exception.statusCode());</span>
+        }
+<span class="fc" id="L376">    }</span>
+
+
+    /**
+     * Close piped streams and shutdown executor service
+     */
+    private void closeStreams(ExecutorService streamExecutor, PipedOutputStream pipedOut, PipedInputStream pipedIn) {
+<span class="fc" id="L383">        streamExecutor.shutdown();</span>
+        try {
+<span class="fc" id="L385">            pipedIn.close();</span>
+<span class="fc" id="L386">            pipedOut.close();</span>
+<span class="nc" id="L387">        } catch (IOException e) {</span>
+            // Log but don't fail on cleanup
+<span class="nc" id="L389">            System.err.println(&quot;Warning: Failed to close piped streams: &quot; + e.getMessage());</span>
+<span class="fc" id="L390">        }</span>
+<span class="fc" id="L391">    }</span>
+
+    /**
+     * Start Neptune bulk load job with automatic fallback
+     */
+    public String startNeptuneBulkLoad(String s3SourceUri) throws Exception {
+<span class="fc" id="L397">        System.err.println(&quot;Starting Neptune bulk load...&quot;);</span>
+<span class="fc bfc" id="L398" title="All 2 branches covered.">        if (!testNeptuneConnectivity()) {</span>
+<span class="fc" id="L399">            throw new RuntimeException(&quot;Cannot connect to Neptune endpoint: &quot; + neptuneEndpoint);</span>
+        }
+
+<span class="fc" id="L402">        HttpRequest request = buildBulkLoadRequest(s3SourceUri);</span>
+
+        // Retry configuration
+<span class="fc" id="L405">        HttpResponse&lt;String&gt; response = null;</span>
+<span class="fc" id="L406">        String loadId = null;</span>
+
+        // Retry loop with exponential backoff
+<span class="pc bpc" id="L409" title="1 of 2 branches missed.">        for (int attempt = 0; attempt &lt;= MAX_RETRIES; attempt++) {</span>
+            try {
+<span class="fc" id="L411">                response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());</span>
+
+<span class="fc bfc" id="L413" title="All 2 branches covered.">                if (response.statusCode() != 200) {</span>
+<span class="fc" id="L414">                    throw new RuntimeException(&quot;Failed to start Neptune bulk load. Status: &quot; +</span>
+<span class="fc" id="L415">                        response.statusCode() + &quot; Response: &quot; + response.body());</span>
+                }
+
+<span class="fc" id="L418">                JsonNode responseJson = objectMapper.readTree(response.body());</span>
+
+<span class="fc" id="L420">                loadId = responseJson.get(&quot;payload&quot;).get(&quot;loadId&quot;).asText();</span>
+<span class="pc bpc" id="L421" title="1 of 2 branches missed.">                if (loadId == null) {</span>
+<span class="nc" id="L422">                    throw new RuntimeException(&quot;Failed to start Neptune bulk load with payload: &quot; +</span>
+<span class="nc" id="L423">                        responseJson.get(&quot;payload&quot;));</span>
+                }
+<span class="fc" id="L425">                System.err.println(&quot;Neptune bulk load started successfully! Load ID: &quot; + loadId);</span>
+<span class="fc" id="L426">                return loadId;</span>
+<span class="fc" id="L427">            } catch (Exception e) {</span>
+<span class="fc bfc" id="L428" title="All 2 branches covered.">                if (attempt == MAX_RETRIES) {</span>
+                    // Use response null check to avoid potential NPE
+<span class="pc bpc" id="L430" title="1 of 2 branches missed.">                    String errorDetails = (response != null)</span>
+<span class="fc" id="L431">                        ? &quot;Status: &quot; + response.statusCode() + &quot; Response: &quot; + response.body()</span>
+<span class="pc" id="L432">                        : &quot;No response received&quot;;</span>
+<span class="fc" id="L433">                    String errorMessage = &quot;Failed to start Neptune bulk load after &quot; +</span>
+                        (MAX_RETRIES + 1) + &quot; attempts. &quot; + errorDetails;
+<span class="fc" id="L435">                    System.err.println(errorMessage);</span>
+<span class="fc" id="L436">                    throw new RuntimeException(errorMessage, e);</span>
+                }
+<span class="fc" id="L438">                System.err.println(&quot;Attempt &quot; + (attempt + 1) + &quot; failed: &quot; + e.getMessage());</span>
+                try {
+<span class="fc" id="L440">                    Thread.sleep(INITIAL_BACKOFF_MS * (1L &lt;&lt; attempt)); // Exponential backoff</span>
+<span class="nc" id="L441">                } catch (InterruptedException ie) {</span>
+<span class="nc" id="L442">                    Thread.currentThread().interrupt(); // Restore interrupt status</span>
+<span class="nc" id="L443">                    throw new RuntimeException(&quot;Retry interrupted&quot;, ie);</span>
+<span class="fc" id="L444">                }</span>
+            }
+        }
+<span class="nc" id="L447">        return loadId;</span>
+    }
+
+    private HttpRequest buildBulkLoadRequest(String s3SourceUri) {
+<span class="fc" id="L451">        String loaderEndpoint = &quot;https://&quot; + neptuneEndpoint + &quot;:&quot; + NEPTUNE_PORT + &quot;/loader&quot;;</span>
+<span class="fc" id="L452">        String requestBody = createRequestBody(s3SourceUri);</span>
+
+<span class="fc" id="L454">        return HttpRequest.newBuilder()</span>
+<span class="fc" id="L455">                .uri(URI.create(loaderEndpoint))</span>
+<span class="fc" id="L456">                .header(&quot;Content-Type&quot;, &quot;application/json&quot;)</span>
+<span class="fc" id="L457">                .POST(HttpRequest.BodyPublishers.ofString(requestBody))</span>
+<span class="fc" id="L458">                .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))</span>
+<span class="fc" id="L459">                .build();</span>
+    }
+
+    private String createRequestBody(String s3SourceUri) {
+<span class="fc" id="L463">        return String.format(</span>
+            &quot;{%n&quot; +
+            &quot;  \&quot;source\&quot;: \&quot;%s\&quot;,%n&quot; +
+            &quot;  \&quot;format\&quot;: \&quot;csv\&quot;,%n&quot; +
+            &quot;  \&quot;iamRoleArn\&quot;: \&quot;%s\&quot;,%n&quot; +
+            &quot;  \&quot;region\&quot;: \&quot;%s\&quot;,%n&quot; +
+            &quot;  \&quot;failOnError\&quot;: \&quot;FALSE\&quot;,%n&quot; +
+            &quot;  \&quot;parallelism\&quot;: \&quot;%s\&quot;,%n&quot; +
+            &quot;  \&quot;updateSingleCardinalityProperties\&quot;: \&quot;FALSE\&quot;,%n&quot; +
+            &quot;  \&quot;queueRequest\&quot;: \&quot;TRUE\&quot;%n&quot; +
+            &quot;}&quot;,
+            s3SourceUri, iamRoleArn, region, parallelism
+        );
+    }
+
+    /**
+     * Test connectivity to Neptune endpoint
+     */
+    protected boolean testNeptuneConnectivity() {
+        try {
+<span class="fc" id="L483">            System.err.println(&quot;Testing connectivity to Neptune endpoint...&quot;);</span>
+<span class="fc" id="L484">            String testEndpoint = &quot;https://&quot; + neptuneEndpoint + &quot;:&quot; + NEPTUNE_PORT + &quot;/status&quot;;</span>
+
+<span class="fc" id="L486">            HttpRequest request = HttpRequest.newBuilder()</span>
+<span class="fc" id="L487">                    .uri(URI.create(testEndpoint))</span>
+<span class="fc" id="L488">                    .header(&quot;Content-Type&quot;, &quot;application/json&quot;)</span>
+<span class="fc" id="L489">                    .GET()</span>
+<span class="fc" id="L490">                    .timeout(Duration.ofSeconds(CONNECTION_TIMEOUT_SECONDS))</span>
+<span class="fc" id="L491">                    .build();</span>
+
+<span class="fc" id="L493">            HttpResponse&lt;String&gt; response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());</span>
+<span class="fc bfc" id="L494" title="All 2 branches covered.">            if (response.statusCode() != 200) {</span>
+<span class="fc" id="L495">                System.err.println(&quot;Failed to connect to Neptune status endpoint. Status: &quot; + response.statusCode());</span>
+<span class="fc" id="L496">                return false;</span>
+            }
+
+<span class="fc" id="L499">            JsonNode responseBody = objectMapper.readTree(response.body());</span>
+<span class="fc bfc" id="L500" title="All 2 branches covered.">            if (!responseBody.has(&quot;status&quot;) ||</span>
+<span class="fc bfc" id="L501" title="All 2 branches covered.">                    !responseBody.get(&quot;status&quot;).asText().equals(&quot;healthy&quot;)) {</span>
+<span class="fc" id="L502">                throw new RuntimeException(&quot;Status not found or instance is not healthy: &quot; + responseBody);</span>
+            }
+
+<span class="fc" id="L505">            System.err.println(&quot;Successful connected to Neptune. Status: &quot; +</span>
+<span class="fc" id="L506">                response.statusCode() + &quot; &quot; + responseBody.get(&quot;status&quot;).asText());</span>
+<span class="fc" id="L507">            return true;</span>
+<span class="fc" id="L508">        } catch (Exception e) {</span>
+<span class="fc" id="L509">            System.err.println(&quot;Neptune connectivity test failed: &quot; + e.getLocalizedMessage());</span>
+<span class="fc" id="L510">            return false;</span>
+        }
+    }
+
+    /**
+     * Monitor Neptune bulk load progress
+     */
+    public void monitorLoadProgress(String loadId) throws Exception {
+<span class="fc" id="L518">        System.err.println(&quot;Monitoring load progress for job: &quot; + loadId);</span>
+<span class="fc" id="L519">        int attempt = 0;</span>
+
+<span class="pc bpc" id="L521" title="1 of 2 branches missed.">        while (attempt &lt; MONITOR_MAX_ATTEMPTS) {</span>
+<span class="fc" id="L522">            String statusResponse = checkNeptuneBulkLoadStatus(loadId);</span>
+
+<span class="pc bpc" id="L524" title="1 of 2 branches missed.">            if (statusResponse != null) {</span>
+<span class="fc" id="L525">                JsonNode responseJson = objectMapper.readTree(statusResponse);</span>
+<span class="fc" id="L526">                String status = &quot;UNKNOWN&quot;;</span>
+
+<span class="fc bfc" id="L528" title="All 2 branches covered.">                if (responseJson.has(&quot;payload&quot;) &amp;&amp;</span>
+<span class="pc bpc" id="L529" title="1 of 2 branches missed.">                        responseJson.get(&quot;payload&quot;).has(&quot;overallStatus&quot;)) {</span>
+<span class="fc" id="L530">                    status = responseJson.get(&quot;payload&quot;)</span>
+<span class="fc" id="L531">                        .get(&quot;overallStatus&quot;).get(&quot;status&quot;).asText();</span>
+<span class="pc bpc" id="L532" title="1 of 2 branches missed.">                } else if (responseJson.has(&quot;status&quot;)) {</span>
+<span class="fc" id="L533">                    status = responseJson.get(&quot;status&quot;).asText();</span>
+                }
+
+<span class="fc bfc" id="L536" title="All 2 branches covered.">                if (BULK_LOAD_STATUS_CODES_COMPLETED.contains(status)) {</span>
+<span class="fc" id="L537">                    System.err.println(&quot;Neptune bulk load completed with status: &quot; + status);</span>
+<span class="fc" id="L538">                    break;</span>
+<span class="fc bfc" id="L539" title="All 2 branches covered.">                } else if (BULK_LOAD_STATUS_CODES_FAILURES.contains(status)) {</span>
+<span class="fc" id="L540">                    System.err.println(&quot;Neptune bulk load failed with status: &quot; + status);</span>
+<span class="fc" id="L541">                    System.err.println(&quot;Full response: &quot; + statusResponse);</span>
+<span class="fc" id="L542">                    break;</span>
+                } else {
+<span class="fc" id="L544">                    System.err.println(&quot;Neptune bulk load status: &quot; + status);</span>
+                }
+            }
+
+<span class="fc" id="L548">            Thread.sleep(MONITOR_SLEEP_TIME_MS);</span>
+<span class="fc" id="L549">            attempt++;</span>
+<span class="fc" id="L550">        }</span>
+
+<span class="pc bpc" id="L552" title="1 of 2 branches missed.">        if (attempt &gt;= MONITOR_MAX_ATTEMPTS) {</span>
+<span class="nc" id="L553">            System.err.println(&quot;Monitoring timeouted at &quot; +</span>
+                MONITOR_SLEEP_TIME_MS * MONITOR_MAX_ATTEMPTS + &quot;ms. Check load status manually.&quot;);
+        }
+<span class="fc" id="L556">    }</span>
+
+    /**
+     * Check the status of a Neptune bulk load job via HTTP
+     */
+    protected String checkNeptuneBulkLoadStatus(String loadId) throws Exception {
+<span class="fc" id="L562">        String statusEndpoint = &quot;https://&quot; + neptuneEndpoint + &quot;:&quot; + NEPTUNE_PORT + &quot;/loader/&quot; + loadId;</span>
+
+<span class="fc" id="L564">        HttpRequest request = HttpRequest.newBuilder()</span>
+<span class="fc" id="L565">                .uri(URI.create(statusEndpoint))</span>
+<span class="fc" id="L566">                .header(&quot;Content-Type&quot;, &quot;application/json&quot;)</span>
+<span class="fc" id="L567">                .GET()</span>
+<span class="fc" id="L568">                .timeout(Duration.ofSeconds(CONNECTION_TIMEOUT_SECONDS))</span>
+<span class="fc" id="L569">                .build();</span>
+
+<span class="fc" id="L571">        HttpResponse&lt;String&gt; response = httpClient.send(request,</span>
+<span class="fc" id="L572">                HttpResponse.BodyHandlers.ofString());</span>
+
+<span class="fc bfc" id="L574" title="All 2 branches covered.">        if (response.statusCode() == 200) {</span>
+<span class="fc" id="L575">            return response.body();</span>
+        } else {
+<span class="fc" id="L577">            throw new RuntimeException(&quot;Request failed with code &quot; + response.statusCode() + &quot;: &quot; + response.body());</span>
+        }
+    }
+
+    /**
+     * Close the transfer manager and release resources (AutoCloseable implementation)
+     */
+    @Override
+    public void close() {
+<span class="pc bpc" id="L586" title="1 of 2 branches missed.">        if (transferManager != null) {</span>
+<span class="fc" id="L587">            transferManager.close();</span>
+        }
+<span class="fc" id="L589">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

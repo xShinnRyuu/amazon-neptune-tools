@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConversionConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.metadata</a> &gt; <span class="el_source">ConversionConfig.java</span></div><h1>ConversionConfig.java</h1><pre class="source lang-java linenums">/*
+Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.metadata;
+
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.Constructor;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.util.*;
+
+/**
+ * Configuration class for label mapping and filtering from YAML file.
+ * &lt;p&gt;
+ * Expected YAML format:
+ * vertexLabels:
+ *   OldVertexLabel: NewVertexLabel
+ *   AnotherOldLabel: AnotherNewLabel
+ * edgeLabels:
+ *   OLD_EDGE_TYPE: NEW_EDGE_TYPE
+ *   ANOTHER_OLD_TYPE: ANOTHER_NEW_TYPE
+ * vertexIdTransformation:
+ *   ~id: &quot;{_labels}_{_id}&quot;
+ * edgeIdTransformation:
+ *   ~id: &quot;{_type}_{_start}_{_end}&quot;
+ * skipVertices:
+ *   byId:
+ *     - &quot;vertex_id_1&quot;
+ *     - &quot;vertex_id_2&quot;
+ *   byLabel:
+ *     - &quot;LabelToSkip&quot;
+ *     - &quot;AnotherLabelToSkip&quot;
+ * skipEdges:
+ *   byLabel:
+ *     - &quot;RELATIONSHIP_TYPE_TO_SKIP&quot;
+ *     - &quot;ANOTHER_TYPE_TO_SKIP&quot;
+ */
+@Data
+@NoArgsConstructor
+public class ConversionConfig {
+
+    // Label mapping configurations
+    private Map&lt;String, String&gt; vertexLabels = new HashMap&lt;&gt;();
+    private Map&lt;String, String&gt; edgeLabels = new HashMap&lt;&gt;();
+
+    // ID transformation configurations
+    private Map&lt;String, String&gt; vertexIdTransformation = new HashMap&lt;&gt;();
+    private Map&lt;String, String&gt; edgeIdTransformation = new HashMap&lt;&gt;();
+
+    // Skip configurations
+    private SkipVertices skipVertices = new SkipVertices();
+    private SkipEdges skipEdges = new SkipEdges();
+
+    /**
+     * Nested class for skipVertices configuration
+     */
+    @Data
+    @NoArgsConstructor
+    public static class SkipVertices {
+        private Set&lt;String&gt; byId = new HashSet&lt;&gt;();
+        private Set&lt;String&gt; byLabel = new HashSet&lt;&gt;();
+    }
+
+    /**
+     * Nested class for skipEdges configuration
+     */
+    @Data
+    @NoArgsConstructor
+    public static class SkipEdges {
+        private Set&lt;String&gt; byLabel = new HashSet&lt;&gt;();
+    }
+
+    /**
+     * Factory method to create LabelMappingConfig from YAML file using automatic object mapping
+     */
+    public static ConversionConfig fromFile(File yamlFile) throws IOException {
+<span class="fc bfc" id="L91" title="All 4 branches covered.">        if (yamlFile == null || !yamlFile.exists()) {</span>
+<span class="fc" id="L92">            return new ConversionConfig(); // Return empty config if no file provided</span>
+        }
+
+<span class="fc" id="L95">        Constructor constructor = new Constructor(ConversionConfig.class, new LoaderOptions());</span>
+<span class="fc" id="L96">        Yaml yaml = new Yaml(constructor);</span>
+
+<span class="fc" id="L98">        try (FileInputStream inputStream = new FileInputStream(yamlFile)) {</span>
+<span class="fc" id="L99">            ConversionConfig config = yaml.load(inputStream);</span>
+
+            // Handle null case if YAML file is empty or malformed
+<span class="fc bfc" id="L102" title="All 2 branches covered.">            if (config == null) {</span>
+<span class="fc" id="L103">                config = new ConversionConfig();</span>
+            }
+
+            // Ensure nested objects are initialized when yaml fields are left empty
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">            if (config.skipVertices == null) {</span>
+<span class="nc" id="L108">                config.skipVertices = new SkipVertices();</span>
+            }
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">            if (config.skipEdges == null) {</span>
+<span class="nc" id="L111">                config.skipEdges = new SkipEdges();</span>
+            }
+<span class="fc bfc" id="L113" title="All 2 branches covered.">            if (config.vertexLabels == null) {</span>
+<span class="fc" id="L114">                config.vertexLabels = new HashMap&lt;&gt;();</span>
+            }
+<span class="pc bpc" id="L116" title="1 of 2 branches missed.">            if (config.edgeLabels == null) {</span>
+<span class="nc" id="L117">                config.edgeLabels = new HashMap&lt;&gt;();</span>
+            }
+<span class="pc bpc" id="L119" title="1 of 2 branches missed.">            if (config.vertexIdTransformation == null) {</span>
+<span class="nc" id="L120">                config.vertexIdTransformation = new HashMap&lt;&gt;();</span>
+            }
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">            if (config.edgeIdTransformation == null) {</span>
+<span class="nc" id="L123">                config.edgeIdTransformation = new HashMap&lt;&gt;();</span>
+            }
+
+            // Ensure nested sets are initialized
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">            if (config.skipVertices.byId == null) {</span>
+<span class="nc" id="L128">                config.skipVertices.byId = new HashSet&lt;&gt;();</span>
+            }
+<span class="fc bfc" id="L130" title="All 2 branches covered.">            if (config.skipVertices.byLabel == null) {</span>
+<span class="fc" id="L131">                config.skipVertices.byLabel = new HashSet&lt;&gt;();</span>
+            }
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">            if (config.skipEdges.byLabel == null) {</span>
+<span class="nc" id="L134">                config.skipEdges.byLabel = new HashSet&lt;&gt;();</span>
+            }
+
+<span class="fc" id="L137">            return config;</span>
+        }
+    }
+
+    /**
+     * Checks if any skip rules are configured.
+     */
+    public boolean hasSkipRules() {
+<span class="fc bfc" id="L145" title="All 6 branches covered.">        return !skipVertices.byId.isEmpty() || !skipVertices.byLabel.isEmpty() || !skipEdges.byLabel.isEmpty();</span>
+    }
+
+    /**
+     * Checks if any ID transformations are configured.
+     */
+    public boolean hasIdTransformations() {
+<span class="pc bpc" id="L152" title="1 of 4 branches missed.">        return !vertexIdTransformation.isEmpty() || !edgeIdTransformation.isEmpty();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

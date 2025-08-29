@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RawCsvPrinter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.io</a> &gt; <span class="el_source">RawCsvPrinter.java</span></div><h1>RawCsvPrinter.java</h1><pre class="source lang-java linenums">/*
+Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.io;
+
+import java.io.FileWriter;
+import java.io.Flushable;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.nio.file.Path;
+
+public class RawCsvPrinter implements Flushable, AutoCloseable {
+
+    static RawCsvPrinter newPrinter(Path filePath, boolean append) throws IOException {
+<span class="nc" id="L24">        return new RawCsvPrinter(filePath, append);</span>
+    }
+
+    static RawCsvPrinter newPrinter(Path filePath) throws IOException {
+<span class="nc" id="L28">        return newPrinter(filePath, false);</span>
+    }
+
+    private final PrintWriter printer;
+
+<span class="nc" id="L33">    private RawCsvPrinter(Path filePath, boolean append) throws IOException {</span>
+<span class="nc" id="L34">        this.printer = new PrintWriter(new FileWriter(filePath.toFile(), append));</span>
+<span class="nc" id="L35">    }</span>
+
+    void printRecord(Iterable&lt;String&gt; values){
+<span class="nc" id="L38">        printer.write(String.join(&quot;,&quot;, values));</span>
+<span class="nc" id="L39">        printer.write(System.lineSeparator());</span>
+<span class="nc" id="L40">    }</span>
+
+    void printRecord(String value){
+<span class="nc" id="L43">        printer.write(value);</span>
+<span class="nc" id="L44">        printer.write(System.lineSeparator());</span>
+<span class="nc" id="L45">    }</span>
+
+    @Override
+    public void flush() throws IOException {
+<span class="nc" id="L49">        printer.flush();</span>
+<span class="nc" id="L50">    }</span>
+
+    @Override
+    public void close() throws IOException {
+<span class="nc" id="L54">        printer.close();</span>
+<span class="nc" id="L55">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

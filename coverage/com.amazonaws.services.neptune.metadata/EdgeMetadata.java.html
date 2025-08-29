@@ -1,0 +1,300 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EdgeMetadata.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.metadata</a> &gt; <span class="el_source">EdgeMetadata.java</span></div><h1>EdgeMetadata.java</h1><pre class="source lang-java linenums">/*
+Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.metadata;
+
+import org.apache.commons.csv.CSVRecord;
+
+import java.util.*;
+import java.util.function.Supplier;
+
+public class EdgeMetadata {
+
+<span class="fc" id="L22">    private static final Supplier&lt;String&gt; ID_GENERATOR = () -&gt; UUID.randomUUID().toString();</span>
+    private static final String EDGE_ID_KEY = &quot;~id&quot;;
+
+    public static EdgeMetadata parse(CSVRecord record, PropertyValueParser parser,
+            ConversionConfig conversionConfig, Set&lt;String&gt; skippedVertexIds, Map&lt;String, String&gt; vertexIdMap) {
+<span class="fc" id="L27">        return parse(record, ID_GENERATOR, parser, conversionConfig, skippedVertexIds, vertexIdMap);</span>
+    }
+
+    public static EdgeMetadata parse(CSVRecord record, Supplier&lt;String&gt; idGenerator, PropertyValueParser parser,
+            ConversionConfig conversionConfig, Set&lt;String&gt; skippedVertexIds, Map&lt;String, String&gt; vertexIdMap) {
+
+<span class="fc" id="L33">        Headers headers = new Headers();</span>
+<span class="fc" id="L34">        headers.add(Token.GREMLIN_ID);</span>
+
+<span class="fc" id="L36">        boolean isEdgeHeader = false;</span>
+<span class="fc" id="L37">        int firstColumnIndex = 0;</span>
+
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        for (String header : record) {</span>
+<span class="fc bfc" id="L40" title="All 2 branches covered.">            if (header.equalsIgnoreCase(&quot;_start&quot;)) {</span>
+<span class="fc" id="L41">                isEdgeHeader = true;</span>
+            }
+<span class="fc bfc" id="L43" title="All 2 branches covered.">            if (isEdgeHeader) {</span>
+<span class="fc bfc" id="L44" title="All 4 branches covered.">                switch (header) {</span>
+                    case &quot;_start&quot;:
+<span class="fc" id="L46">                        headers.add(Token.GREMLIN_FROM);</span>
+<span class="fc" id="L47">                        break;</span>
+                    case &quot;_end&quot;:
+<span class="fc" id="L49">                        headers.add(Token.GREMLIN_TO);</span>
+<span class="fc" id="L50">                        break;</span>
+                    case &quot;_type&quot;:
+<span class="fc" id="L52">                        headers.add(Token.GREMLIN_LABEL);</span>
+<span class="fc" id="L53">                        break;</span>
+                    default:
+<span class="fc" id="L55">                        headers.add(new Property(header));</span>
+<span class="fc" id="L56">                }</span>
+            } else {
+<span class="fc" id="L58">                firstColumnIndex++;</span>
+            }
+<span class="fc" id="L60">        }</span>
+<span class="fc" id="L61">        return new EdgeMetadata(headers, firstColumnIndex, idGenerator, parser, conversionConfig, skippedVertexIds, vertexIdMap);</span>
+    }
+
+    private final Headers headers;
+    private final int firstColumnIndex;
+    private final Supplier&lt;String&gt; idGenerator;
+    private final PropertyValueParser propertyValueParser;
+    private final ConversionConfig conversionConfig;
+    private final Set&lt;String&gt; skippedVertexIds;
+    private final Map&lt;String, String&gt; vertexIdMap;
+
+    // Cache for property name to index mapping
+<span class="fc" id="L73">    private final Map&lt;String, Integer&gt; propertyIndexMap = new HashMap&lt;&gt;();</span>
+
+    // Cache for edge template
+    private final String edgeIdTemplate;
+
+    protected EdgeMetadata(Headers headers,
+                         int firstColumnIndex,
+                         Supplier&lt;String&gt; idGenerator,
+                         PropertyValueParser parser,
+                         ConversionConfig conversionConfig,
+                         Set&lt;String&gt; skippedVertexIds) {
+<span class="nc" id="L84">        this(headers, firstColumnIndex, idGenerator, parser, conversionConfig, skippedVertexIds, Collections.emptyMap());</span>
+<span class="nc" id="L85">    }</span>
+
+    protected EdgeMetadata(Headers headers,
+                         int firstColumnIndex,
+                         Supplier&lt;String&gt; idGenerator,
+                         PropertyValueParser parser,
+                         ConversionConfig conversionConfig,
+                         Set&lt;String&gt; skippedVertexIds,
+<span class="fc" id="L93">                         Map&lt;String, String&gt; vertexIdMap) {</span>
+<span class="fc" id="L94">        this.headers = headers;</span>
+<span class="fc" id="L95">        this.firstColumnIndex = firstColumnIndex;</span>
+<span class="fc" id="L96">        this.idGenerator = idGenerator;</span>
+<span class="fc" id="L97">        this.propertyValueParser = parser;</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">        this.conversionConfig = conversionConfig != null ? conversionConfig : new ConversionConfig();</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">        this.skippedVertexIds = skippedVertexIds != null ? skippedVertexIds : Collections.emptySet();</span>
+<span class="pc bpc" id="L100" title="1 of 2 branches missed.">        this.vertexIdMap = vertexIdMap != null ? vertexIdMap : Collections.emptyMap();</span>
+
+        // Cache the edge ID template
+<span class="fc" id="L103">        this.edgeIdTemplate = this.conversionConfig.getEdgeIdTransformation().get(EDGE_ID_KEY);</span>
+
+        // Pre-compute property name to index mapping for faster lookups
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        for (int i = 1; i &lt; headers.count(); i++) {</span>
+<span class="fc" id="L107">            Header header = headers.get(i);</span>
+<span class="fc bfc" id="L108" title="All 2 branches covered.">            if (header instanceof Property) {</span>
+<span class="fc" id="L109">                int recordIndex = firstColumnIndex + i - 1;</span>
+<span class="fc" id="L110">                propertyIndexMap.put(((Property) header).getName(), recordIndex);</span>
+            }
+        }
+<span class="fc" id="L113">    }</span>
+
+    public List&lt;String&gt; headers() {
+<span class="fc" id="L116">        return headers.values();</span>
+    }
+
+    public int firstColumnIndex() {
+<span class="fc" id="L120">        return firstColumnIndex;</span>
+    }
+
+    public boolean isEdge(CSVRecord record) {
+<span class="fc bfc" id="L124" title="All 2 branches covered.">        return record.size() &gt; firstColumnIndex + 2 &amp;&amp;</span>
+<span class="fc bfc" id="L125" title="All 2 branches covered.">            !record.get(firstColumnIndex).isEmpty() &amp;&amp;</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">            !record.get(firstColumnIndex + 1).isEmpty() &amp;&amp;</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">            !record.get(firstColumnIndex + 2).isEmpty();</span>
+    }
+
+    public Optional&lt;Iterable&lt;String&gt;&gt; toIterable(CSVRecord record) {
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        if (shouldSkipEdge(record)) {</span>
+<span class="fc" id="L132">            return Optional.empty();</span>
+        }
+
+<span class="fc" id="L135">        return Optional.of(() -&gt; new Iterator&lt;String&gt;() {</span>
+<span class="fc" id="L136">            int currentColumnIndex = firstColumnIndex - 1;</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="fc bfc" id="L140" title="All 2 branches covered.">                return currentColumnIndex &lt; record.size();</span>
+            }
+
+            @Override
+            public String next() {
+<span class="fc bfc" id="L145" title="All 2 branches covered.">                if (currentColumnIndex &lt; firstColumnIndex) {</span>
+<span class="fc" id="L146">                    currentColumnIndex++;</span>
+<span class="fc" id="L147">                    return mapEdgeId(idGenerator.get(), record);</span>
+                } else {
+<span class="fc" id="L149">                    int headerIndex = currentColumnIndex - firstColumnIndex + 1;</span>
+<span class="fc" id="L150">                    Header header = headers.get(headerIndex);</span>
+<span class="fc" id="L151">                    String value = record.get(currentColumnIndex++);</span>
+
+<span class="pc bpc" id="L153" title="1 of 2 branches missed.">                    if (header.equals(Token.NEO4J_LABELS)) {</span>
+<span class="nc" id="L154">                        return value;</span>
+<span class="pc bpc" id="L155" title="1 of 4 branches missed.">                    } else if (header.equals(Token.GREMLIN_FROM) || header.equals(Token.NEO4J_START)) {</span>
+<span class="fc" id="L156">                        return transformVertexId(value);</span>
+<span class="pc bpc" id="L157" title="1 of 4 branches missed.">                    } else if (header.equals(Token.GREMLIN_TO) || header.equals(Token.NEO4J_END)) {</span>
+<span class="fc" id="L158">                        return transformVertexId(value);</span>
+<span class="pc bpc" id="L159" title="1 of 4 branches missed.">                    } else if (header.equals(Token.GREMLIN_LABEL) || header.equals(Token.NEO4J_TYPE)) {</span>
+<span class="fc" id="L160">                        return mapEdgeLabel(value);</span>
+                    } else {
+<span class="fc" id="L162">                        PropertyValue propertyValue = propertyValueParser.parse(value);</span>
+<span class="fc" id="L163">                        header.updateDataType(propertyValue.dataType());</span>
+<span class="fc" id="L164">                        return propertyValue.value();</span>
+                    }
+                }
+            }
+        });
+    }
+
+    String mapEdgeId(String originalId, CSVRecord record) {
+<span class="pc bpc" id="L172" title="1 of 4 branches missed.">        if (edgeIdTemplate == null || edgeIdTemplate.isEmpty()) {</span>
+<span class="fc" id="L173">            return originalId;</span>
+        }
+
+        // Quick check if template has no placeholders
+<span class="fc bfc" id="L177" title="All 2 branches covered.">        if (!edgeIdTemplate.contains(&quot;{&quot;)) {</span>
+<span class="fc" id="L178">            return edgeIdTemplate;</span>
+        }
+
+        // Start with the template and replace {_id}
+<span class="fc" id="L182">        String result = edgeIdTemplate.replace(Token.valueWithCurlyBraces(Token.NEO4J_ID), originalId);</span>
+
+        // Support for {_type} placeholder (Neo4j format)
+<span class="fc bfc" id="L185" title="All 2 branches covered.">        if (result.contains(Token.valueWithCurlyBraces(Token.NEO4J_TYPE))) {</span>
+<span class="fc" id="L186">            String edgeType = record.get(firstColumnIndex + 2);</span>
+<span class="fc" id="L187">            result = result.replace(Token.valueWithCurlyBraces(Token.NEO4J_TYPE), mapEdgeLabel(edgeType));</span>
+        }
+
+        // Support for {_start} placeholder (Neo4j format)
+<span class="fc bfc" id="L191" title="All 2 branches covered.">        if (result.contains(Token.valueWithCurlyBraces(Token.NEO4J_START))) {</span>
+<span class="fc" id="L192">            String fromId = record.get(firstColumnIndex);</span>
+<span class="fc" id="L193">            String transformedFromId = transformVertexId(fromId);</span>
+<span class="fc" id="L194">            result = result.replace(Token.valueWithCurlyBraces(Token.NEO4J_START), transformedFromId);</span>
+        }
+
+        // Support for {_end} placeholder (Neo4j format)
+<span class="fc bfc" id="L198" title="All 2 branches covered.">        if (result.contains(Token.valueWithCurlyBraces(Token.NEO4J_END))) {</span>
+<span class="fc" id="L199">            String toId = record.get(firstColumnIndex + 1);</span>
+<span class="fc" id="L200">            String transformedToId = transformVertexId(toId);</span>
+<span class="fc" id="L201">            result = result.replace(Token.valueWithCurlyBraces(Token.NEO4J_END), transformedToId);</span>
+        }
+
+        // Support for {~label} if present (Gremlin format)
+<span class="fc bfc" id="L205" title="All 2 branches covered.">        if (result.contains(Token.valueWithCurlyBraces(Token.GREMLIN_LABEL))) {</span>
+<span class="fc" id="L206">            String edgeType = record.get(firstColumnIndex + 2);</span>
+<span class="fc" id="L207">            result = result.replace(Token.valueWithCurlyBraces(Token.GREMLIN_LABEL), mapEdgeLabel(edgeType));</span>
+        }
+
+        // Support for {~from} placeholder (Gremlin format)
+<span class="fc bfc" id="L211" title="All 2 branches covered.">        if (result.contains(Token.valueWithCurlyBraces(Token.GREMLIN_FROM))) {</span>
+<span class="fc" id="L212">            String fromId = record.get(firstColumnIndex);</span>
+<span class="fc" id="L213">            String transformedFromId = transformVertexId(fromId);</span>
+<span class="fc" id="L214">            result = result.replace(Token.valueWithCurlyBraces(Token.GREMLIN_FROM), transformedFromId);</span>
+        }
+
+        // Support for {~to} placeholder (Gremlin format)
+<span class="fc bfc" id="L218" title="All 2 branches covered.">        if (result.contains(Token.valueWithCurlyBraces(Token.GREMLIN_TO))) {</span>
+<span class="fc" id="L219">            String toId = record.get(firstColumnIndex + 1);</span>
+<span class="fc" id="L220">            String transformedToId = transformVertexId(toId);</span>
+<span class="fc" id="L221">            result = result.replace(Token.valueWithCurlyBraces(Token.GREMLIN_TO), transformedToId);</span>
+        }
+
+        // Replace property placeholders using the cached property index map
+<span class="fc bfc" id="L225" title="All 2 branches covered.">        for (Map.Entry&lt;String, Integer&gt; entry : propertyIndexMap.entrySet()) {</span>
+<span class="fc" id="L226">            String propName = entry.getKey();</span>
+<span class="fc" id="L227">            String placeholder = &quot;{&quot; + propName + &quot;}&quot;;</span>
+
+<span class="fc bfc" id="L229" title="All 2 branches covered.">            if (result.contains(placeholder)) {</span>
+<span class="fc" id="L230">                int index = entry.getValue();</span>
+<span class="pc bpc" id="L231" title="1 of 2 branches missed.">                if (index &lt; record.size()) {</span>
+<span class="fc" id="L232">                    result = result.replace(placeholder, record.get(index));</span>
+                }
+            }
+<span class="fc" id="L235">        }</span>
+
+        // Check if any placeholders remain
+<span class="fc" id="L238">        int placeholderStart = result.indexOf('{');</span>
+<span class="fc bfc" id="L239" title="All 2 branches covered.">        if (placeholderStart &gt;= 0) {</span>
+<span class="fc" id="L240">            int placeholderEnd = result.indexOf('}', placeholderStart);</span>
+<span class="pc bpc" id="L241" title="1 of 2 branches missed.">            if (placeholderEnd &gt; placeholderStart) {</span>
+<span class="fc" id="L242">                String placeholder = result.substring(placeholderStart + 1, placeholderEnd);</span>
+<span class="fc" id="L243">                throw new IllegalArgumentException(&quot;Property {&quot; + placeholder + &quot;} not found in CSV headers&quot;);</span>
+            }
+        }
+
+<span class="fc" id="L247">        return result;</span>
+    }
+
+    public String mapEdgeLabel(String originalLabel) {
+<span class="fc bfc" id="L251" title="All 4 branches covered.">        if (originalLabel == null || originalLabel.trim().isEmpty()) {</span>
+<span class="fc" id="L252">            return originalLabel;</span>
+        }
+
+<span class="fc" id="L255">        return conversionConfig.getEdgeLabels().getOrDefault(originalLabel.trim(), originalLabel.trim());</span>
+    }
+
+    boolean shouldSkipEdge(CSVRecord record) {
+        // An edge might still be skipped if its connected vertex is skipped
+<span class="pc bpc" id="L260" title="1 of 6 branches missed.">        if (conversionConfig == null || !conversionConfig.hasSkipRules() &amp;&amp; skippedVertexIds.isEmpty()) {</span>
+<span class="fc" id="L261">            return false;</span>
+        }
+
+<span class="fc" id="L264">        Set&lt;String&gt; skipEdgeLabels = conversionConfig.getSkipEdges().getByLabel();</span>
+
+        // Make sure we have enough columns for edge data
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">        if (record.size() &lt;= firstColumnIndex + 2) {</span>
+<span class="nc" id="L268">            return false; // Not enough data to be a valid edge</span>
+        }
+
+        // The actual edge data starts at firstColumnIndex
+<span class="fc" id="L272">        String startVertexId = record.get(firstColumnIndex);     // _start</span>
+<span class="fc" id="L273">        String endVertexId = record.get(firstColumnIndex + 1);   // _end</span>
+<span class="fc" id="L274">        String edgeType = record.get(firstColumnIndex + 2);      // _type</span>
+
+        // Skip edge if either connected vertex was skipped, note this does rely on nodes being processed first
+<span class="fc bfc" id="L277" title="All 4 branches covered.">        if (skippedVertexIds.contains(startVertexId) || skippedVertexIds.contains(endVertexId)) {</span>
+<span class="fc" id="L278">            return true;</span>
+        }
+
+        // Check if edge type/label should be skipped
+<span class="pc bpc" id="L282" title="3 of 8 branches missed.">        if (edgeType != null &amp;&amp; !edgeType.trim().isEmpty() &amp;&amp; !skipEdgeLabels.isEmpty() &amp;&amp; skipEdgeLabels.contains(edgeType.trim())) {</span>
+<span class="fc" id="L283">            return true;</span>
+        }
+
+<span class="fc" id="L286">        return false;</span>
+    }
+
+    /**
+     * Transform a vertex ID using the vertex ID mapping.
+     * This method can be overridden by subclasses to provide custom transformation logic.
+     *
+     * @param originalId The original vertex ID
+     * @return The transformed vertex ID, or the original ID if no transformation is found
+     */
+    protected String transformVertexId(String originalId) {
+<span class="fc" id="L297">        return vertexIdMap.getOrDefault(originalId, originalId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

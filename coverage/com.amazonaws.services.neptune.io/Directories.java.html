@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Directories.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune.io</a> &gt; <span class="el_source">Directories.java</span></div><h1>Directories.java</h1><pre class="source lang-java linenums">/*
+Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune.io;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+public class Directories {
+
+    public static Directories createFor(File root) throws IOException {
+<span class="pc bpc" id="L23" title="1 of 2 branches missed.">        if (root == null) {</span>
+<span class="nc" id="L24">            throw new IllegalArgumentException(&quot;You must supply a directory&quot;);</span>
+        }
+
+<span class="fc" id="L27">        String directoryName = String.valueOf(System.currentTimeMillis());</span>
+<span class="fc" id="L28">        Path rootDirectory = root.toPath();</span>
+
+<span class="fc" id="L30">        Path directory = rootDirectory.resolve(directoryName);</span>
+<span class="fc" id="L31">        Files.createDirectories(directory);</span>
+
+<span class="fc" id="L33">        return new Directories(directory);</span>
+    }
+
+    private final Path directory;
+
+<span class="fc" id="L38">    private Directories(Path directory) {</span>
+<span class="fc" id="L39">        this.directory = directory;</span>
+<span class="fc" id="L40">    }</span>
+
+    public Path outputDirectory() {
+<span class="fc" id="L43">        return directory;</span>
+    }
+
+    Path createFilePath(String name) {
+<span class="fc" id="L47">        return createFilePath(name, null);</span>
+    }
+
+    Path createFilePath(String name, Object index) {
+
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        String filename = index == null ?</span>
+<span class="fc" id="L53">                String.format(&quot;%s.csv&quot;, name) :</span>
+<span class="fc" id="L54">                String.format(&quot;%s-%s.csv&quot;, name, index);</span>
+
+<span class="fc" id="L56">        return directory.resolve(filename);</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

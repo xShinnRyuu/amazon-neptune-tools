@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ConvertCsv.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">neo4j-to-neptune</a> &gt; <a href="index.source.html" class="el_package">com.amazonaws.services.neptune</a> &gt; <span class="el_source">ConvertCsv.java</span></div><h1>ConvertCsv.java</h1><pre class="source lang-java linenums">/*
+Copyright 2025 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License, Version 2.0 (the &quot;License&quot;).
+You may not use this file except in compliance with the License.
+A copy of the License is located at
+    http://www.apache.org/licenses/LICENSE-2.0
+or in the &quot;license&quot; file accompanying this file. This file is distributed
+on an &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+express or implied. See the License for the specific language governing
+permissions and limitations under the License.
+*/
+
+package com.amazonaws.services.neptune;
+
+import com.amazonaws.services.neptune.io.Directories;
+import com.amazonaws.services.neptune.io.Neo4jStreamWriter;
+import com.amazonaws.services.neptune.io.OutputFile;
+import com.amazonaws.services.neptune.metadata.*;
+import com.amazonaws.services.neptune.util.CSVUtils;
+import com.amazonaws.services.neptune.util.NeptuneBulkLoader;
+import com.amazonaws.services.neptune.util.Timer;
+import com.github.rvesse.airline.annotations.Command;
+import com.github.rvesse.airline.annotations.Option;
+import com.github.rvesse.airline.annotations.restrictions.*;
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicLong;
+import io.github.cdimascio.dotenv.Dotenv;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
+
+import java.io.File;
+import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+
+@Command(name = &quot;convert-csv&quot;, description = &quot;Converts CSV file exported from Neo4j via 'apoc.export.csv.all' to Neptune Gremlin load data formatted CSV files, &quot; +
+        &quot;and optionally automates the bulk loading of the converted data into Amazon Neptune.&quot;)
+<span class="nc" id="L41">public class ConvertCsv implements Runnable {</span>
+
+    // Neo4j CSV file conversion options
+    @Option(name = {&quot;-d&quot;, &quot;--dir&quot;}, description = &quot;Root directory for output&quot;)
+    @Required
+    @Path(mustExist = false, kind = PathKind.DIRECTORY)
+    @Once
+    private File outputDirectory;
+
+    @Option(name = {&quot;-df&quot;, &quot;--dotenv-file&quot;}, description = &quot;Path to the Dotenv file for Neo4j AuraDB connection.&quot;)
+    @RequireOnlyOne(tag = &quot;input&quot;)
+    @Path(mustExist = true, kind = PathKind.FILE)
+    @Once
+    private File envFile;
+
+    @Option(name = {&quot;-u&quot;, &quot;--uri&quot;}, description = &quot;URI of the Neo4j Database to stream data from&quot;)
+    @RequireOnlyOne(tag = &quot;input&quot;)
+    @Once
+    private String uri;
+
+    @Option(name = {&quot;-n&quot;, &quot;--username&quot;}, description = &quot;Neo4j Database username&quot;)
+    @Once
+    private String username;
+
+    @Option(name = {&quot;-pw&quot;, &quot;--password&quot;}, description = &quot;Neo4j Database password&quot;)
+    @Once
+    private String password;
+
+    @Option(name = {&quot;-i&quot;, &quot;--input&quot;}, description = &quot;Path to Neo4j CSV file&quot;)
+    @RequireOnlyOne(tag = &quot;input&quot;)
+    @Path(mustExist = true, kind = PathKind.FILE)
+    @Once
+    private File inputFile;
+
+    @Option(name = {&quot;--conversion-config&quot;}, description = &quot;Path to YAML file containing configuration for label mappings and record filtering&quot;)
+    @Path(mustExist = true, kind = PathKind.FILE)
+    @Once
+    private File conversionConfigFile;
+
+<span class="nc" id="L80">    @Option(name = {&quot;--node-property-policy&quot;}, description = &quot;Conversion policy for multi-valued node properties (default, 'PutInSetIgnoringDuplicates')&quot;)</span>
+    @Once
+    @AllowedValues(allowedValues = {&quot;LeaveAsString&quot;, &quot;Halt&quot;, &quot;PutInSetIgnoringDuplicates&quot;, &quot;PutInSetButHaltIfDuplicates&quot;})
+    private MultiValuedNodePropertyPolicy multiValuedNodePropertyPolicy = MultiValuedNodePropertyPolicy.PutInSetIgnoringDuplicates;
+
+<span class="nc" id="L85">    @Option(name = {&quot;--relationship-property-policy&quot;}, description = &quot;Conversion policy for multi-valued relationship properties (default, 'LeaveAsString')&quot;)</span>
+    @Once
+    @AllowedValues(allowedValues = {&quot;LeaveAsString&quot;, &quot;Halt&quot;})
+    private MultiValuedRelationshipPropertyPolicy multiValuedRelationshipPropertyPolicy = MultiValuedRelationshipPropertyPolicy.LeaveAsString;
+
+<span class="nc" id="L90">    @Option(name = {&quot;--semi-colon-replacement&quot;}, description = &quot;Replacement for semi-colon character in multi-value string properties (default, ' ')&quot;)</span>
+    @Once
+    @Pattern(pattern = &quot;^[^;]*$&quot;, description = &quot;Replacement string cannot contain a semi-colon.&quot;)
+    private String semiColonReplacement = &quot; &quot;;
+
+<span class="nc" id="L95">    @Option(name = {&quot;--infer-types&quot;}, description = &quot;Infer data types for CSV column headings&quot;)</span>
+    @Once
+    private boolean inferTypes = false;
+
+    // Neptune bulk load options
+    @Option(name = {&quot;--bulk-load-config&quot;}, description = &quot;Path to YAML file containing configuration for enabling bulk load to Neptune. &quot; +
+        &quot;If provided, configuration values are loaded from this file first, then overridden by any CLI parameters specified.&quot;)
+    @Path(mustExist = true, kind = PathKind.FILE)
+    @Once
+    private File bulkLoadConfigFile;
+
+    @Option(name = {&quot;--bucket-name&quot;}, description = &quot;S3 bucket name for CSV files to be stored. &quot; +
+        &quot;Overrides bucket-name from bulk-load-config file if both are provided.&quot;)
+    @Once
+    private String bucketName;
+
+    @Option(name = {&quot;--s3-prefix&quot;}, description = &quot;S3 prefix for uploaded file. &quot; +
+        &quot;Overrides s3-prefix from bulk-load-config file if both are provided.&quot;)
+    @Once
+    private String s3Prefix;
+
+    @Option(name = {&quot;--neptune-endpoint&quot;}, description =
+        &quot;Neptune cluster endpoint. Example: my-neptune-cluster.cluster-abc123.&lt;region&gt;.neptune.amazonaws.com. &quot; +
+        &quot;Overrides neptune-endpoint from bulk-load-config file if both are provided. &quot; +
+        &quot;Either this parameter or --bulk-load-config must be provided to enable bulk loading.&quot;)
+    @Once
+    private String neptuneEndpoint;
+
+    @Option(name = {&quot;--iam-role-arn&quot;}, description = &quot;IAM role ARN for Neptune bulk loading. It will need S3 and Neptune access permissions. &quot; +
+        &quot;Overrides iam-role-arn from bulk-load-config file if both are provided. \n&quot; +
+        &quot;Refer to the following documentation for the specific policies/permissions required:\n&quot; + //
+        &quot;https://docs.aws.amazon.com/neptune/latest/userguide/bulk-load-tutorial-IAM-CreateRole.html\n&quot; + //
+        &quot;https://docs.aws.amazon.com/neptune/latest/userguide/bulk-load-tutorial-IAM-add-role-cluster.html&quot;)
+    @Once
+    private String iamRoleArn;
+
+    @Option(name = {&quot;--parallelism&quot;}, description = &quot;Parallelism level for Neptune bulk loading (default: OVERSUBSCRIBE). &quot; +
+        &quot;Overrides parallelism from bulk-load-config file if both are provided.&quot;)
+    @Once
+    @AllowedValues(allowedValues = {&quot;LOW&quot;, &quot;MEDIUM&quot;, &quot;HIGH&quot;, &quot;OVERSUBSCRIBE&quot;})
+    private String parallelism;
+
+    @Option(name = {&quot;--monitor&quot;}, description = &quot;Monitor Neptune bulk load progress until completion (default: false). &quot; +
+        &quot;Overrides monitor from bulk-load-config file if both are provided.&quot;)
+    @Once
+    private boolean monitor;
+
+    @Override
+    public void run() {
+        try {
+            // Early validation: Check if user wants to bulk load and validate parameters before conversion
+<span class="nc" id="L146">            BulkLoadConfig bulkLoadConfig = readBulkLoadConfig();</span>
+
+            // Load label mapping configuration
+<span class="nc" id="L149">            ConversionConfig conversionConfig = ConversionConfig.fromFile(conversionConfigFile);</span>
+
+<span class="nc" id="L151">            Directories directories = Directories.createFor(outputDirectory);</span>
+
+<span class="nc" id="L153">            File input = inputFile;</span>
+<span class="nc" id="L154">            File tempDataFile = null;</span>
+
+            // if no input file provided, it is via streaming
+<span class="nc bnc" id="L157" title="All 2 branches missed.">            if (input == null) {</span>
+                String uriInput, usernameInput, passwordInput;
+<span class="nc bnc" id="L159" title="All 2 branches missed.">                if (envFile != null) {</span>
+<span class="nc" id="L160">                    Dotenv dotenv = Dotenv.configure()</span>
+<span class="nc" id="L161">                            .directory(envFile.getParent())</span>
+<span class="nc" id="L162">                            .filename(envFile.getName())</span>
+<span class="nc" id="L163">                            .load();</span>
+<span class="nc" id="L164">                    uriInput = dotenv.get(&quot;NEO4J_URI&quot;);</span>
+<span class="nc" id="L165">                    usernameInput = dotenv.get(&quot;NEO4J_USERNAME&quot;);</span>
+<span class="nc" id="L166">                    passwordInput = dotenv.get(&quot;NEO4J_PASSWORD&quot;);</span>
+<span class="nc" id="L167">                } else {</span>
+<span class="nc" id="L168">                    uriInput = uri;</span>
+<span class="nc" id="L169">                    usernameInput = username;</span>
+<span class="nc" id="L170">                    passwordInput = password;</span>
+                }
+<span class="nc" id="L172">                try (Neo4jStreamWriter writer = new Neo4jStreamWriter(uriInput, usernameInput, passwordInput, directories)) {</span>
+<span class="nc" id="L173">                    tempDataFile = writer.streamToFile();</span>
+                }
+
+<span class="nc" id="L176">                input = tempDataFile;</span>
+            }
+
+<span class="nc" id="L179">            try (Timer timer = new Timer();</span>
+<span class="nc" id="L180">                 OutputFile vertexFile = new OutputFile(directories, &quot;vertices&quot;);</span>
+<span class="nc" id="L181">                 OutputFile edgeFile = new OutputFile(directories, &quot;edges&quot;)) {</span>
+
+                // Process CSV in two passes to minimize memory usage
+<span class="nc" id="L184">                processCsvInTwoPasses(input, vertexFile, edgeFile, conversionConfig);</span>
+
+<span class="nc" id="L186">                System.err.println(&quot;Output  : &quot; + directories.outputDirectory());</span>
+
+<span class="nc bnc" id="L188" title="All 4 branches missed.">                if (!conversionConfig.getVertexLabels().isEmpty() || !conversionConfig.getEdgeLabels().isEmpty()) {</span>
+<span class="nc" id="L189">                    System.err.println(&quot;Label mappings applied from: &quot; + conversionConfigFile.getAbsolutePath());</span>
+                }
+
+<span class="nc" id="L192">                System.out.println(directories.outputDirectory());</span>
+
+                // delete streamed data file after conversion
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                if (tempDataFile != null) Files.deleteIfExists(tempDataFile.toPath());</span>
+            }
+
+            // Bulk loading happens AFTER conversion (using pre-validated config)
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            if (bulkLoadConfig != null) {</span>
+<span class="nc" id="L200">                try (NeptuneBulkLoader neptuneBulkLoader = new NeptuneBulkLoader(bulkLoadConfig)) {</span>
+
+<span class="nc" id="L202">                    String uri = directories.outputDirectory().toFile().getAbsolutePath();</span>
+<span class="nc" id="L203">                    String s3SourceUri = neptuneBulkLoader.uploadCsvFilesToS3(uri);</span>
+<span class="nc" id="L204">                    String loadId = neptuneBulkLoader.startNeptuneBulkLoad(s3SourceUri);</span>
+
+<span class="nc bnc" id="L206" title="All 2 branches missed.">                    if (bulkLoadConfig.isMonitor()) {</span>
+<span class="nc" id="L207">                        neptuneBulkLoader.monitorLoadProgress(loadId);</span>
+                    }
+                }
+            }
+<span class="nc" id="L211">        } catch (Exception e) {</span>
+<span class="nc" id="L212">            System.err.println(&quot;An error occurred while running convert-csv:&quot;);</span>
+<span class="nc" id="L213">            e.printStackTrace();</span>
+<span class="nc" id="L214">        }</span>
+<span class="nc" id="L215">    }</span>
+
+    /**
+     * Validates and prepares bulk load configuration if bulk loading is requested.
+     * @return BulkLoadConfig if bulk loading is requested and valid, null if no bulk loading requested
+     * @throws IllegalArgumentException if bulk loading is requested but configuration is invalid
+     * @throws IOException if there's an error reading the bulk load config file
+     */
+    private BulkLoadConfig readBulkLoadConfig() throws Exception {
+<span class="nc bnc" id="L224" title="All 4 branches missed.">        if (bulkLoadConfigFile == null &amp;&amp; neptuneEndpoint == null) {</span>
+<span class="nc" id="L225">            return null; // No bulk loading requested</span>
+        }
+
+        // Get the bulk load config from file
+<span class="nc" id="L229">        BulkLoadConfig config = BulkLoadConfig.fromFile(bulkLoadConfigFile);</span>
+
+        // Override with required CLI parameters if provided
+<span class="nc" id="L232">        config.withBucketName(bucketName)</span>
+<span class="nc" id="L233">              .withNeptuneEndpoint(neptuneEndpoint)</span>
+<span class="nc" id="L234">              .withIamRoleArn(iamRoleArn);</span>
+
+        // Override with optional CLI parameters if provided
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        if (s3Prefix != null) {</span>
+<span class="nc" id="L238">            config.setS3Prefix(s3Prefix);</span>
+        }
+
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        if (parallelism != null) {</span>
+<span class="nc" id="L242">            config.setParallelism(parallelism);</span>
+        }
+
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (monitor) {</span>
+<span class="nc" id="L246">            config.setMonitor(monitor);</span>
+        }
+
+<span class="nc" id="L249">        BulkLoadConfig.validateBulkLoadConfigValues(config);</span>
+<span class="nc" id="L250">        return config;</span>
+    }
+
+    /**
+     * Processes the CSV file in two passes to minimize memory usage while supporting ID transformations.
+     * First pass processes vertices and builds ID mapping, second pass processes edges using that mapping.
+     */
+    private void processCsvInTwoPasses(File input, OutputFile vertexFile, OutputFile edgeFile,
+                                      ConversionConfig conversionConfig) throws IOException {
+
+        // First pass: Process vertices and build ID mapping
+<span class="nc" id="L261">        Map&lt;String, String&gt; vertexIdMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L262">        Set&lt;String&gt; skippedVertexIds = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L263">        AtomicLong skippedVertexCount = new AtomicLong(0);</span>
+<span class="nc" id="L264">        AtomicLong vertexCount = new AtomicLong(0);</span>
+
+<span class="nc" id="L266">        CSVRecord headers = null;</span>
+
+<span class="nc" id="L268">        try (CSVParser parser = CSVUtils.newParser(input)) {</span>
+<span class="nc" id="L269">            Iterator&lt;CSVRecord&gt; iterator = parser.iterator();</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            if (iterator.hasNext()) {</span>
+<span class="nc" id="L271">                headers = iterator.next();</span>
+<span class="nc" id="L272">                VertexMetadata vertexMetadata = VertexMetadata.parse(</span>
+                    headers,
+                    new PropertyValueParser(multiValuedNodePropertyPolicy, semiColonReplacement, inferTypes),
+                    conversionConfig);
+
+<span class="nc bnc" id="L277" title="All 2 branches missed.">                while (iterator.hasNext()) {</span>
+<span class="nc" id="L278">                    CSVRecord record = iterator.next();</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                    if (vertexMetadata.isVertex(record)) {</span>
+<span class="nc" id="L280">                        processVertex(vertexFile, vertexIdMap, skippedVertexIds, vertexCount, skippedVertexCount,</span>
+                                vertexMetadata, record);
+                    }
+<span class="nc" id="L283">                }</span>
+
+                // Write vertex headers
+<span class="nc" id="L286">                vertexFile.printHeaders(vertexMetadata.headers());</span>
+            }
+        }
+
+        // Second pass: Process edges with vertex ID mapping
+<span class="nc" id="L291">        AtomicLong skippedEdgeCount = new AtomicLong(0);</span>
+<span class="nc" id="L292">        AtomicLong edgeCount = new AtomicLong(0);</span>
+
+<span class="nc" id="L294">        try (CSVParser parser = CSVUtils.newParser(input)) {</span>
+<span class="nc" id="L295">            Iterator&lt;CSVRecord&gt; iterator = parser.iterator();</span>
+<span class="nc bnc" id="L296" title="All 4 branches missed.">            if (iterator.hasNext() &amp;&amp; headers != null) {</span>
+                // Skip header row
+<span class="nc" id="L298">                iterator.next();</span>
+
+                // Create edge metadata with vertex ID mapping
+<span class="nc" id="L301">                EdgeMetadata edgeMetadata = EdgeMetadata.parse(</span>
+                    headers,
+                    new PropertyValueParser(multiValuedRelationshipPropertyPolicy, semiColonReplacement, inferTypes),
+                    conversionConfig,
+                    skippedVertexIds,
+                    vertexIdMap);
+
+<span class="nc bnc" id="L308" title="All 2 branches missed.">                while (iterator.hasNext()) {</span>
+<span class="nc" id="L309">                    CSVRecord record = iterator.next();</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">                    if (edgeMetadata.isEdge(record)) {</span>
+<span class="nc" id="L311">                        processEdge(edgeFile, edgeCount, skippedEdgeCount, edgeMetadata, record);</span>
+                    }
+<span class="nc" id="L313">                }</span>
+
+                // Write edge headers
+<span class="nc" id="L316">                edgeFile.printHeaders(edgeMetadata.headers());</span>
+            }
+        }
+
+<span class="nc" id="L320">        printStatistics(conversionConfig, vertexCount, skippedVertexCount, edgeCount, skippedEdgeCount);</span>
+<span class="nc" id="L321">    }</span>
+
+    private void processEdge(OutputFile edgeFile, AtomicLong edgeCount,
+            AtomicLong skippedEdgeCount, EdgeMetadata edgeMetadata, CSVRecord record) {
+
+<span class="nc" id="L326">        edgeMetadata.toIterable(record).ifPresentOrElse(it -&gt; {</span>
+            try {
+<span class="nc" id="L328">                edgeFile.printRecord(it);</span>
+<span class="nc" id="L329">                edgeCount.incrementAndGet();</span>
+<span class="nc" id="L330">            } catch (IOException e) {</span>
+<span class="nc" id="L331">                throw new RuntimeException(e);</span>
+<span class="nc" id="L332">            }</span>
+<span class="nc" id="L333">        }, skippedEdgeCount::getAndIncrement);</span>
+<span class="nc" id="L334">    }</span>
+
+    private void processVertex(OutputFile vertexFile, Map&lt;String, String&gt; vertexIdMap, Set&lt;String&gt; skippedVertexIds,
+            AtomicLong vertexCount, AtomicLong skippedVertexCount, VertexMetadata vertexMetadata, CSVRecord record) {
+<span class="nc" id="L338">        vertexMetadata.toIterable(record).ifPresentOrElse(it -&gt; {</span>
+            try {
+<span class="nc" id="L340">                vertexFile.printRecord(it);</span>
+<span class="nc" id="L341">                vertexCount.incrementAndGet();</span>
+
+                // Store mapping between original and transformed IDs
+<span class="nc" id="L344">                String originalId = record.get(0);</span>
+                // Get the transformed ID from the vertex metadata
+<span class="nc" id="L346">                String transformedId = vertexMetadata.getVertexIdMap().get(originalId);</span>
+<span class="nc bnc" id="L347" title="All 2 branches missed.">                if (transformedId != null) {</span>
+<span class="nc" id="L348">                    vertexIdMap.put(originalId, transformedId);</span>
+                }
+<span class="nc" id="L350">            } catch (IOException e) {</span>
+<span class="nc" id="L351">                throw new RuntimeException(&quot;Error processing edge record: &quot; + record, e);</span>
+<span class="nc" id="L352">            }</span>
+<span class="nc" id="L353">        }, () -&gt; {</span>
+            // Record was skipped
+<span class="nc" id="L355">            skippedVertexCount.incrementAndGet();</span>
+<span class="nc" id="L356">            skippedVertexIds.add(record.get(0));</span>
+<span class="nc" id="L357">        });</span>
+<span class="nc" id="L358">    }</span>
+
+    private void printStatistics(ConversionConfig conversionConfig,
+            AtomicLong vertexCount, AtomicLong skippedVertexCount, AtomicLong edgeCount, AtomicLong skippedEdgeCount) {
+
+<span class="nc" id="L363">        System.err.println(&quot;Vertices: &quot; + vertexCount);</span>
+<span class="nc" id="L364">        System.err.println(&quot;Edges   : &quot; + edgeCount);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        if (conversionConfig.hasSkipRules()) {</span>
+<span class="nc" id="L366">            System.err.println(&quot;Skipped vertices: &quot; + skippedVertexCount);</span>
+<span class="nc" id="L367">            System.err.println(&quot;Skipped edges  : &quot; + skippedEdgeCount);</span>
+<span class="nc" id="L368">            System.err.println(&quot;Skip rules: &quot; +</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                    (!conversionConfig.getSkipVertices().getById().isEmpty() ?</span>
+<span class="nc" id="L370">                            conversionConfig.getSkipVertices().getById().size() + &quot; vertex IDs, &quot; : &quot;&quot;) +</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                    (!conversionConfig.getSkipVertices().getByLabel().isEmpty() ?</span>
+<span class="nc" id="L372">                            conversionConfig.getSkipVertices().getByLabel().size() + &quot; vertex labels, &quot; : &quot;&quot;) +</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">                    (!conversionConfig.getSkipEdges().getByLabel().isEmpty()  ?</span>
+<span class="nc" id="L374">                            conversionConfig.getSkipEdges().getByLabel().size() + &quot; edge labels&quot; : &quot;&quot;));</span>
+        }
+<span class="nc" id="L376">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>
