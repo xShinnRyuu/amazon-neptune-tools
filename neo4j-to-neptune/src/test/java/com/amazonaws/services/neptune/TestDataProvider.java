@@ -14,7 +14,6 @@ package com.amazonaws.services.neptune;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,7 +32,6 @@ import com.amazonaws.services.neptune.util.CSVUtils;
 import com.amazonaws.services.neptune.util.NeptuneBulkLoader;
 
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.transfer.s3.S3TransferManager;
 
 /**
  * Test data provider utility class for Neptune bulk loader tests
@@ -101,22 +99,6 @@ public class TestDataProvider {
         try (NeptuneBulkLoader loader = new NeptuneBulkLoader(bulkLoadConfig)) {
             return loader;
         }
-    }
-
-    /**
-     * Creates a NeptuneBulkLoader with custom HttpClient and S3TransferManager for testing
-     * @param httpClient The HttpClient to use for HTTP requests
-     * @param transferManager The S3TransferManager to use for S3 operations
-     * @return NeptuneBulkLoader instance with the provided clients
-     */
-    public static NeptuneBulkLoader createNeptuneBulkLoader(HttpClient httpClient, S3TransferManager transferManager) {
-        BulkLoadConfig bulkLoadConfig =
-            createBulkLoadConfig(BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BOOLEAN_FALSE);
-        return new NeptuneBulkLoader(
-            bulkLoadConfig,
-            httpClient,
-            transferManager
-        );
     }
 
     /**

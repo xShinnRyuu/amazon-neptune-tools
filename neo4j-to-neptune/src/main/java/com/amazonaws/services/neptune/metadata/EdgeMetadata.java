@@ -296,4 +296,5 @@ public class EdgeMetadata {
     protected String transformVertexId(String originalId) {
         return vertexIdMap.getOrDefault(originalId, originalId);
     }
+
 }
