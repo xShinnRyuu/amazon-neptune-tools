@@ -90,6 +90,7 @@ public class ConversionConfigTest {
         assertTrue(config.getSkipEdges().getByLabel().contains("DEBUG_LINK"));
 
     }
+
     @Test
     public void testPartialYamlConfiguration() throws IOException {
         // Test with only some sections present
@@ -104,11 +105,13 @@ public class ConversionConfigTest {
         }
 
         ConversionConfig config = ConversionConfig.fromFile(tempFile);
+
         // Test that present sections work
         assertEquals(1, config.getVertexLabels().size());
         assertEquals("Individual", config.getVertexLabels().get("Person"));
         assertEquals(1, config.getSkipVertices().getByLabel().size());
         assertTrue(config.getSkipVertices().getByLabel().contains("TestData"));
+
         // Test that missing sections are empty but not null
         assertTrue(config.getEdgeLabels().isEmpty());
         assertTrue(config.getSkipVertices().getById().isEmpty());
@@ -137,11 +140,13 @@ public class ConversionConfigTest {
         assertTrue(config.getSkipEdges().getByLabel().isEmpty());
 
     }
+
     @Test
     public void testEmptyYamlFile() throws IOException {
         // Test with empty YAML file
         File tempFile = File.createTempFile("test-empty", ".yaml");
         tempFile.deleteOnExit();
+
         try (FileWriter writer = new FileWriter(tempFile)) {
             // Write empty file
         }
@@ -200,6 +205,7 @@ public class ConversionConfigTest {
         // Test with malformed YAML that should still parse partially
         File tempFile = File.createTempFile("test-malformed", ".yaml");
         tempFile.deleteOnExit();
+
         try (FileWriter writer = new FileWriter(tempFile)) {
             writer.write("vertexLabels:\n");
             writer.write("  Person: Individual\n");
@@ -210,6 +216,7 @@ public class ConversionConfigTest {
         }
 
         ConversionConfig config = ConversionConfig.fromFile(tempFile);
+
         // Should still parse correctly
         assertEquals(1, config.getVertexLabels().size());
         assertEquals("Individual", config.getVertexLabels().get("Person"));
@@ -275,6 +282,7 @@ public class ConversionConfigTest {
         // Test direct access to nested objects
         File tempFile = File.createTempFile("test-nested", ".yaml");
         tempFile.deleteOnExit();
+
         try (FileWriter writer = new FileWriter(tempFile)) {
             writer.write("skipVertices:\n");
             writer.write("  byId:\n");
@@ -284,6 +292,7 @@ public class ConversionConfigTest {
         }
 
         ConversionConfig config = ConversionConfig.fromFile(tempFile);
+
         // Test direct access to nested objects
         assertNotNull(config.getSkipVertices());
         assertEquals(1, config.getSkipVertices().getById().size());
@@ -291,11 +300,13 @@ public class ConversionConfigTest {
         assertTrue(config.getSkipVertices().getById().contains("123"));
         assertTrue(config.getSkipVertices().getByLabel().contains("Test"));
     }
+
     @Test
     public void testLombokAnnotations() throws IOException {
         // Test that Lombok annotations are working correctly
         File tempFile = File.createTempFile("test-lombok", ".yaml");
         tempFile.deleteOnExit();
+
         try (FileWriter writer = new FileWriter(tempFile)) {
             writer.write("vertexLabels:\n");
             writer.write("  Person: Individual\n");

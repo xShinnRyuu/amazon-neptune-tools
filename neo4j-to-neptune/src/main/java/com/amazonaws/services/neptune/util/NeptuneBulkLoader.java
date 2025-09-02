@@ -107,8 +107,7 @@ public class NeptuneBulkLoader implements AutoCloseable {
         this.parallelism = bulkLoadConfig.getParallelism().toUpperCase();
         this.monitor = bulkLoadConfig.isMonitor();
 
-        // Initialize clients
-        // Create S3AsyncClient with optimized configuration for large file uploads
+        // Create S3AsyncClient with configuration for large file uploads
         S3AsyncClient s3AsyncClient = S3AsyncClient.builder()
                 .region(region)
                 .credentialsProvider(DefaultCredentialsProvider.create())
@@ -263,6 +262,7 @@ public class NeptuneBulkLoader implements AutoCloseable {
      */
     protected CompletableFuture<Boolean> uploadFileWithInflightCompression(String localFilePath, String s3Prefix) throws Exception {
         File localFile = validateLocalFile(localFilePath);
+
         String s3Key = s3Prefix + ".gz";
         String s3SourceUri = "s3://" + bucketName + "/" + s3Key;
         System.err.println("Starting upload with compression of " + localFilePath + " to " + s3SourceUri);
