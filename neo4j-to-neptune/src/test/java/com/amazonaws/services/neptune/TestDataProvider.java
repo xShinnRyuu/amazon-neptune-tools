@@ -45,6 +45,7 @@ public class TestDataProvider {
     public static final String CONVERT_CSV_TIMESTAMP = "1751659751530";
     public static final Region REGION_US_EAST_2 = Region.US_EAST_2;
     public static final String NEPTUNE_ENDPOINT = "test-neptune.cluster-abc123." + REGION_US_EAST_2 + ".neptune.amazonaws.com";
+    public static final String NEPTUNE_PORT = "8182";
     public static final String IAM_ROLE_ARN = "arn:aws:iam::123456789012:role/TestNeptuneRole";
     public static final String TEMP_FOLDER_NAME = "TEST_TEMP_FOLDER";
     public static final String VERTICES_CSV = "vertices.csv";
@@ -82,11 +83,12 @@ public class TestDataProvider {
     public static final String LOAD_FAILED_INVALID_REQUEST = "LOAD_FAILED_INVALID_REQUEST";
 
     public static BulkLoadConfig createBulkLoadConfig(
-            String bucket, String s3Prefix, String neptuneEndpoint, String iamRoleArn, String parallelism, boolean monitor) {
+            String bucket, String s3Prefix, String neptuneEndpoint, String neptunePort, String iamRoleArn, String parallelism, boolean monitor) {
         BulkLoadConfig bulkLoadConfig = new BulkLoadConfig();
         bulkLoadConfig.setBucketName(bucket);
         bulkLoadConfig.setS3Prefix(s3Prefix);
         bulkLoadConfig.setNeptuneEndpoint(neptuneEndpoint);
+        bulkLoadConfig.setNeptunePort(neptunePort);
         bulkLoadConfig.setIamRoleArn(iamRoleArn);
         bulkLoadConfig.setParallelism(parallelism);
         bulkLoadConfig.setMonitor(monitor);
@@ -94,8 +96,9 @@ public class TestDataProvider {
     }
 
     public static NeptuneBulkLoader createNeptuneBulkLoader() {
-        BulkLoadConfig bulkLoadConfig =
-            createBulkLoadConfig(BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BOOLEAN_FALSE);
+        BulkLoadConfig bulkLoadConfig = createBulkLoadConfig(
+            BUCKET, S3_PREFIX, NEPTUNE_ENDPOINT, NEPTUNE_PORT,
+            IAM_ROLE_ARN, BULK_LOAD_PARALLELISM_MEDIUM, BOOLEAN_FALSE);
         try (NeptuneBulkLoader loader = new NeptuneBulkLoader(bulkLoadConfig)) {
             return loader;
         }
@@ -108,9 +111,9 @@ public class TestDataProvider {
      * @param edgesFile The file location where edges CSV data should be written
      * @throws IOException If file creation fails
      */
-    public static void createMockCsvFiles(File directory, File verticesFile, File edgesFile) throws IOException {
-        createMockVerticesFile(directory, verticesFile);
-        createMockEdgesFile(directory, edgesFile);
+    public static void createMockCsvFiles(File verticesFile, File edgesFile) throws IOException {
+        createMockVerticesFile(verticesFile);
+        createMockEdgesFile(edgesFile);
     }
 
     /**
@@ -121,33 +124,35 @@ public class TestDataProvider {
     public static void createMockCsvFiles(File directory) throws IOException {
         File testVerticiesFile = new File(directory, TestDataProvider.VERTICES_CSV);
         File testEdgesFile = new File(directory, TestDataProvider.EDGES_CSV);
-        createMockVerticesFile(directory, testVerticiesFile);
-        createMockEdgesFile(directory, testEdgesFile);
+        createMockVerticesFile(testVerticiesFile);
+        createMockEdgesFile(testEdgesFile);
     }
 
     /**
      * Creates a mock vertices.csv file with sample Neptune vertex data
-     * @param directory The directory where the vertices.csv file should be created
+     * @param verticesFile The vertices.csv file to create the mock data in
      * @throws IOException If file creation fails
      */
-    public static void createMockVerticesFile(File directory, File verticesFile) throws IOException {
-        String verticesContent = "~id,~label,name,age\n" +
-                                "v1,Person,John,30\n" +
-                                "v2,Person,Jane,25\n" +
-                                "v3,Company,ACME,null\n";
+    public static void createMockVerticesFile(File verticesFile) throws IOException {
+        String verticesContent = """
+            ~id,~label,name,age
+            v1,Person,John,30
+            v2,Person,Jane,25
+            v3,Company,ACME,null""";
         Files.write(verticesFile.toPath(), verticesContent.getBytes());
     }
 
     /**
      * Creates a mock edges.csv file with sample Neptune edge data
-     * @param directory The directory where the edges.csv file should be created
+     * @param edgesFile The edges.csv file to create the mock data in
      * @throws IOException If file creation fails
      */
-    public static void createMockEdgesFile(File directory, File edgesFile) throws IOException {
-        String edgesContent = "~id,~from,~to,~label,weight\n" +
-                             "e1,v1,v2,knows,0.8\n" +
-                             "e2,v1,v3,works_for,1.0\n" +
-                             "e3,v2,v3,works_for,1.0\n";
+    public static void createMockEdgesFile(File edgesFile) throws IOException {
+        String edgesContent = """
+            ~id,~from,~to,~label,weight
+            e1,v1,v2,knows,0.8
+            e2,v1,v3,works_for,1.0
+            e3,v2,v3,works_for,1.0""";
         Files.write(edgesFile.toPath(), edgesContent.getBytes());
     }
 
