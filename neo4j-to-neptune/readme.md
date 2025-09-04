@@ -40,6 +40,26 @@ java -jar neo4j-to-neptune.jar convert-csv \
   --infer-types
 ```
 
+**Convert and bulk load to Neptune:**
+```bash
+java -jar neo4j-to-neptune.jar convert-csv \
+  -i /tmp/neo4j-export.csv \
+  -d output \
+  --neptune-endpoint my-cluster.cluster-abc123.us-east-2.neptune.amazonaws.com \
+  --bucket-name my-neptune-bucket \
+  --iam-role-arn arn:aws:iam::123456789012:role/NeptuneLoadFromS3 \
+  --infer-types
+```
+
+**Convert and bulk load using configuration file:**
+```bash
+java -jar neo4j-to-neptune.jar convert-csv \
+  -i /tmp/neo4j-export.csv \
+  -d output \
+  --bulk-load-config bulk-load-config.yaml \
+  --infer-types
+```
+
 ### Build
 
 ```
