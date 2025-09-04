@@ -276,10 +276,11 @@ Create a YAML configuration file with your bulk load settings:
 ```yaml
 # S3 Configuration
 bucket-name: "my-neptune-bulk-load-bucket"
-s3-prefix: "neptune-data"
+s3-prefix: "neptune"
 
 # Neptune Configuration
 neptune-endpoint: "my-neptune-cluster.cluster-abc123def456.us-east-1.neptune.amazonaws.com"
+neptune-port: "8182"
 
 # IAM Configuration
 iam-role-arn: "arn:aws:iam::123456789012:role/NeptuneLoadFromS3Role"
@@ -328,6 +329,7 @@ The following parameters must be provided either via CLI or configuration file:
 
 #### Optional Parameters
 
+- **Neptune port**: `--neptune-port` or `neptune-port` in YAML (default: "8182")
 - **S3 prefix**: `--s3-prefix` or `s3-prefix` in YAML
 - **Parallelism**: `--parallelism` or `parallelism` in YAML (default: "OVERSUBSCRIBE")
   - Options: `LOW`, `MEDIUM`, `HIGH`, `OVERSUBSCRIBE`
@@ -348,31 +350,56 @@ When bulk load parameters are provided (either via `--bulk-load-config` or `--ne
 #### Example Output
 
 ```
-Vertices: 174
-Edges   : 255
-Output  : /tmp/output/1751656971039
-/tmp/output/1751656971039
+java -jar target/neo4j-to-neptune.jar convert-csv -d output --uri bolt://localhost:7687 --username neo4j --password password --bulk-load-config bulk-load-config.yaml
+SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder".
+SLF4J: Defaulting to no-operation (NOP) logger implementation
+SLF4J: See http://www.slf4j.org/codes.html#StaticLoggerBinder for further details.
+Sep. 04, 2025 12:14:34 P.M. com.amazonaws.services.neptune.io.Neo4jStreamWriter <init>
+INFO: Successfully connected to Neo4j database at: bolt://localhost:7687
+Sep. 04, 2025 12:14:34 P.M. com.amazonaws.services.neptune.io.Neo4jStreamWriter streamToFile
+INFO: Starting data export to file: /tmp/output/1757013274850/neo4j-stream-data-temp.csv
+Sep. 04, 2025 12:14:35 P.M. com.amazonaws.services.neptune.io.Neo4jStreamWriter streamToFile
+INFO: Successfully exported 1 records (425 lines) to file: /tmp/output/1757013274850/neo4j-stream-data-temp.csv
+Sep. 04, 2025 12:14:35 P.M. com.amazonaws.services.neptune.io.Neo4jStreamWriter close
+INFO: Neo4j driver closed successfully
+Vertices: 171
+Edges   : 253
+Output  : output/1757013274850
+output/1757013274850
 
-Completed in x second(s)
+Completed in 0 second(s)
 S3 Bucket: my-bucket
 S3 Prefix: neptune
-AWS Region: us-east-2
-IAM Role ARN: arn:aws:iam::123456789000:role/NeptunePolicy
-Neptune Endpoint: my-neptune-db.cluster-xxxxxxxxxxxx.us-east-2.neptune.amazonaws.com
-Bulk Load Parallelism: MEDIUM
+AWS Region: us-west-2
+IAM Role ARN: arn:aws:iam::123456789100:role/NeptuneReadS3
+Neptune Endpoint: db-neptune-1.cluster-xxxxxxxxxxxx.us-west-2.neptune.amazonaws.com
+Neptune Port: 8182
+Bulk Load Parallelism: OVERSUBSCRIBE
+Bulk Load Monitor: true
+
 Uploading Gremlin load data to S3...
-Starting async upload of files from /tmp/output/1751656971039 to s3://my-bucket/neptune/1751656971039
-Starting async upload of /tmp/output/1751656971039/vertices.csv to s3://my-bucket/neptune/1751656971039/vertices.csv
-Starting async upload of /tmp/output/1751656971039/edges.csv to s3://my-bucket/neptune/1751656971039/edges.csv
-Successfully uploaded vertices.csv - ETag: "abc123..."
-Successfully uploaded edges.csv - ETag: "def456..."
-Successfully uploaded 2 files from /tmp/output/1751656971039
-Files uploaded successfully to S3. Files available at: s3://my-bucket/neptune/1751656971039/
+Starting sequential upload of files from /tmp/output/1757013274850 to s3://my-bucket/neptune/1757013274850
+Uploading file 1 of 2: vertices.csv
+Starting upload with compression of /tmp/output/1757013274850/vertices.csv to s3://my-bucket/neptune/1757013274850/vertices.csv.gz
+File size: 7.2 KB
+Initiating Transfer Manager upload...
+Upload with compression completed for /tmp/output/1757013274850/vertices.csv
+Successfully uploaded vertices.csv (1/2)
+Uploading file 2 of 2: edges.csv
+Starting upload with compression of /tmp/output/1757013274850/edges.csv to s3://my-bucket/neptune/1757013274850/edges.csv.gz
+File size: 17.6 KB
+Initiating Transfer Manager upload...
+Upload with compression completed for /tmp/output/1757013274850/edges.csv
+Successfully uploaded edges.csv (2/2)
+Successfully uploaded all 2 files from /tmp/output/1757013274850
+Files uploaded successfully to S3. Files available at: s3://my-bucket/neptune/1757013274850/
 Starting Neptune bulk load...
 Testing connectivity to Neptune endpoint...
-Successful connected to Neptune. Status: 200 healthy
-Neptune bulk load started successfully! Load ID: 12345678-1234-1234-1234-123456789012
-Monitoring load progress for job: 12345678-1234-1234-1234-123456789012
+Successfully connected to Neptune. Status: 200 healthy
+Neptune bulk load started successfully with load ID: a478c673-xxxx-xxxx-xxxx-77a70a430be8
+Monitoring load progress for job: a478c673-xxxx-xxxx-xxxx-77a70a430be8
+Neptune bulk load status: LOAD_IN_PROGRESS
+Neptune bulk load status: LOAD_IN_PROGRESS
 Neptune bulk load status: LOAD_IN_PROGRESS
 Neptune bulk load status: LOAD_IN_PROGRESS
 Neptune bulk load completed with status: LOAD_COMPLETED
