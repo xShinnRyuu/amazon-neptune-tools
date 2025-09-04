@@ -72,20 +72,20 @@ mvn clean install
 
 ## Migration Process
 
-Migration of data from Neo4j to Neptune can now be accomplished in a few ways:
+Migration of data from Neo4j to Neptune can be accomplished in a few ways:
 
-### Option 1: Manual Multi-Step Process
+### Option 1: Manual Multi-Step
 
  1. [**Export CSV from Neo4j**](#export-csv-from-neo4j) – Use the APOC export procedures to export data from Neo4j to CSV.
  2. [**Convert CSV**](#convert-csv) – Use the `convert-csv` command-line utility to convert the exported CSV into the Neptune Gremlin bulk load CSV format.
  3. [**Bulk Load into Neptune**](#bulk-load-into-neptune-manual) – Use the Neptune bulk load API to load data into Neptune.
 
-### Option 2: Local Convert and Bulk Load Process
+### Option 2: Local Convert then Bulk Load
 
  1. [**Export CSV from Neo4j**](#export-csv-from-neo4j) – Use the APOC export procedures to export data from Neo4j to CSV.
  2. [**Convert and Bulk Load**](#convert-and-bulk-load) – Use the `convert-csv` command with either `--bulk-load-config` or the required combination of `--bucket-name`, `--neptune-endpoint`, and `--iam-role-arn` to automatically convert the CSV, upload it to S3, and initiate a bulk load into Neptune.
 
-### Option 3: Automatically Stream Convert and Bulk Load Process
+### Option 3: Automatically Stream and Convert then Bulk Load
 
  1. [**Stream and Convert CSV**](#convert-csv) – Use the `convert-csv` command with either `--dotenv-file` or all of `--uri`, `--username` and `--password` to provide Neo4j credentials and stream the data without manually exporting it.
  2. [**Bulk Load**](#convert-and-bulk-load) - Specify either `--bulk-load-config` or the required combination of `--bucket-name`, `--neptune-endpoint`, and `--iam-role-arn`as the bulk load parameters.
@@ -100,7 +100,7 @@ Follow the [instructions](https://neo4j.com/docs/labs/apoc/current/introduction/
 
 #### 2. Enable exports
 
-Create/Update the _apoc.conf_ configuration file to enable exports:
+Create or update the `apoc.conf` configuration file to enable exports:
 
 ```
 apoc.export.file.enabled=true
@@ -125,11 +125,11 @@ Use the [`convert-csv`](docs/convert-csv.md) command-line utility to convert the
 
 The utility requires two sets of parameters:
 
-1. Input from Neo4j — Provide one of the following:
-  - [Manual] A path to locally exported Neo4j CSV file(s) using the `--input` or `-i` flag.
+1. **Input method from Neo4j** — Provide one of the following:
+  - [Manual] A path to locally exported Neo4j CSV files using the `--input` or `-i` flag.
   - [Stream] A path to a `.env` file using the `--dotenv-file` or `-df` flag. This file must define the variables `NEO4J_URI`, `NEO4J_USERNAME`, and `NEO4J_PASSWORD`, corresponding to the Neo4j URI, username, and password.
   - [Stream] Directly specify the Neo4j URI, username, and password using the flags `--uri` or `-u`, `--username` or `-n`, and `--password` or `-pw`
-2. Output directory — The path to the local directory where the converted CSV files will be written.
+2. **Output directory** — The path to the local directory where the converted CSV files will be written.
 
 There are also optional parameters that allow you to specify node, relationship multi-valued property policies, turn on data type inferencing, or to use a configuration YAML file for more granular conversion manipulation.
 
@@ -164,7 +164,7 @@ Note that `convert-csv` will always use a __double__ for values with decimal or 
 
 ##### Method 1: Using Local Exported Neo4j CSV
 
-To convert a local csv that was exported from Neo4j, provide the required parameters:
+To convert a local CSV that was exported from Neo4j, provide the required parameters:
 
 ```bash
 java -jar neo4j-to-neptune.jar convert-csv \
@@ -199,7 +199,7 @@ java -jar neo4j-to-neptune.jar convert-csv \
 
 #### Configuration with YAML
 
-The `convert-csv` utility supports conversion configuration through the YAML file for ID transformation, label mapping, and filtering:
+The `convert-csv` utility conversion process can be configured through the YAML file for ID transformation, label mapping, and filtering:
 
 ```bash
 java -jar neo4j-to-neptune.jar convert-csv \
@@ -209,17 +209,17 @@ java -jar neo4j-to-neptune.jar convert-csv \
   [additional options]
 ```
 
-**Example configuration file:**
-For an example of the conversion config YAML file refer to `docs/example-conversion-config.yaml`
+##### Example configuration file
+For an example of the conversion config YAML file refer to [`docs/example-conversion-config.yaml`](docs/example-conversion-config.yaml)
 
-**ID Transformation Templates:**
+##### ID Transformation Templates
 
 Templates can reference original data fields using placeholders:
 
 - **Vertex templates**: `{_id}`, `{_labels}`, `{property_name}`
 - **Edge templates**: `{_type}`, `{_start}`, `{_end}`, `{~from}`, `{~to}`, `{property_name}`
 
-**Examples:**
+##### Examples
 - `"{_labels}_{name}_{_id}"` → `"Person_John_123"`
 - `"e!{~label}_{~from}_{~to}"` → `"e!KNOWS_Person_123_Person_456"`
 
@@ -315,6 +315,7 @@ java -jar neo4j-to-neptune.jar convert-csv \
   [additional options]
 ```
 
+[!IMPORTANT]
 **Parameter Precedence:** CLI parameters override configuration file values, which override default values.
 
 #### Required Parameters
